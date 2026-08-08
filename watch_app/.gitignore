@@ -1,0 +1,43 @@
+# Gradle
+.gradle/
+build/
+*.apk
+*.aar
+*.jks
+*.keystore
+
+# IDE
+.idea/
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Local configuration
+local.properties
+.DS_Store
+
+# Kotlin
+.kotlin/
+out/
+
+# Mac
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Backup files
+*.bak
+*~
+*.swp
+*.swo
+
+# Generated files
+bin/
+gen/

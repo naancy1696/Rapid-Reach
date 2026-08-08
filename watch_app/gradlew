@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+# Gradle wrapper script for Unix
+
+APP_NAME="Gradle"
+APP_BASE_NAME=$(basename "$0")
+
+# Find java.exe for Windows or java for Unix
+if command -v java &> /dev/null; then
+    JAVA_EXE="java"
+else
+    echo "Error: JAVA_HOME is not set and no 'java' command found"
+    exit 1
+fi
+
+# Determine the directory this script is in
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+# Use gradle from wrapper
+if [ -f "$SCRIPT_DIR/gradle/wrapper/gradle-wrapper.jar" ]; then
+    exec "$JAVA_EXE" -jar "$SCRIPT_DIR/gradle/wrapper/gradle-wrapper.jar" "$@"
+else
+    echo "Gradle wrapper jar not found. Running with local gradle installation..."
+    exec gradle "$@"
+fi

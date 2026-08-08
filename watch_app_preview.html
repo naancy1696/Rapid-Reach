@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAPID REACH Wear OS - Preview</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Roboto', Arial, sans-serif;
+            background: #1a1a1a;
+            padding: 20px;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #E63946;
+        }
+
+        .screens-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 30px;
+        }
+
+        .screen {
+            border: 3px solid #E63946;
+            border-radius: 30px;
+            width: 320px;
+            height: 450px;
+            background: linear-gradient(135deg, #0F0F0F 0%, #1a1a1a 100%);
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: 0 0 20px rgba(230, 57, 70, 0.3);
+            margin: 0 auto;
+        }
+
+        .screen-title {
+            text-align: center;
+            font-size: 12px;
+            color: #E63946;
+            margin-bottom: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .screen-content {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        /* Splash Screen */
+        .splash-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        .splash-content .title {
+            font-size: 28px;
+            font-weight: bold;
+            color: #E63946;
+            margin-bottom: 10px;
+        }
+
+        .splash-content .subtitle {
+            font-size: 14px;
+            color: #999;
+        }
+
+        .loading-dot {
+            width: 10px;
+            height: 10px;
+            background: #E63946;
+            border-radius: 50%;
+            margin: 15px auto;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+
+        /* Home Screen */
+        .header {
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+            color: #E63946;
+            margin-bottom: 15px;
+        }
+
+        .status-card {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 10px;
+            padding: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+        }
+
+        .status-label {
+            color: #999;
+        }
+
+        .status-value {
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .status-active {
+            color: #4ade80;
+        }
+
+        .status-inactive {
+            color: #ef4444;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+
+        .indicator-active {
+            background: #4ade80;
+        }
+
+        .indicator-inactive {
+            background: #ef4444;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 8px;
+            margin: 10px 0;
+        }
+
+        .btn-small {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+            text-align: center;
+        }
+
+        .btn-primary {
+            background: #E63946;
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+        }
+
+        .btn-large {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: #E63946;
+            color: white;
+            border: none;
+            font-weight: bold;
+            font-size: 24px;
+            cursor: pointer;
+            margin: 20px auto;
+            display: block;
+            box-shadow: 0 0 30px rgba(230, 57, 70, 0.5);
+            transition: all 0.3s;
+        }
+
+        .btn-large:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 40px rgba(230, 57, 70, 0.7);
+        }
+
+        .metric {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 12px;
+        }
+
+        .metric-label {
+            color: #999;
+            margin-bottom: 5px;
+        }
+
+        .metric-value {
+            font-size: 16px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .quick-links {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .quick-link {
+            background: #1a1a1a;
+            border: 1px solid #555;
+            border-radius: 6px;
+            padding: 10px;
+            text-align: center;
+            font-size: 11px;
+            color: #E63946;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .quick-link:hover {
+            border-color: #E63946;
+            background: rgba(230, 57, 70, 0.1);
+        }
+
+        .permission-item {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 10px;
+            font-size: 11px;
+            margin-bottom: 8px;
+        }
+
+        .permission-title {
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .permission-desc {
+            color: #999;
+            font-size: 10px;
+            margin-top: 3px;
+        }
+
+        .permission-status {
+            float: right;
+            color: #E63946;
+            font-size: 10px;
+        }
+
+        .setting-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            border-bottom: 1px solid #333;
+            font-size: 12px;
+        }
+
+        .setting-label {
+            color: #999;
+        }
+
+        .setting-value {
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .about-box {
+            background: rgba(230, 57, 70, 0.1);
+            border: 1px solid #E63946;
+            border-radius: 6px;
+            padding: 10px;
+            font-size: 11px;
+            margin-top: 10px;
+        }
+
+        .about-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+
+        .about-label {
+            color: #999;
+        }
+
+        .about-value {
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .phase-badge {
+            display: inline-block;
+            background: #4ade80;
+            color: #000;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+
+        .message {
+            background: rgba(230, 57, 70, 0.1);
+            border-left: 3px solid #E63946;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            color: #ccc;
+            margin-top: 10px;
+        }
+
+        .placeholder {
+            color: #666;
+        }
+
+        .section-title {
+            font-size: 13px;
+            font-weight: bold;
+            color: #E63946;
+            margin-top: 12px;
+            margin-bottom: 8px;
+        }
+
+        .back-button {
+            display: inline-block;
+            background: #333;
+            color: #E63946;
+            border: 1px solid #555;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 10px;
+            margin-bottom: 10px;
+            cursor: pointer;
+        }
+
+        .back-button:hover {
+            border-color: #E63946;
+        }
+
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1a1a1a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #E63946;
+            border-radius: 2px;
+        }
+
+        .info-banner {
+            background: rgba(230, 57, 70, 0.15);
+            border: 1px solid #E63946;
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 10px;
+            color: #ddd;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚨 RAPID REACH - Wear OS Companion App</h1>
+        <p style="text-align: center; margin-bottom: 30px; color: #999;">Breakpoint 1 - Foundation + UI Preview (Interactive Screens)</p>
+
+        <div class="screens-grid">
+            <!-- Splash Screen -->
+            <div class="screen">
+                <div class="screen-title">Screen 1: Splash</div>
+                <div class="screen-content">
+                    <div class="splash-content">
+                        <div class="title">RAPID REACH</div>
+                        <div class="subtitle">Emergency Response</div>
+                        <div class="loading-dot"></div>
+                        <div style="font-size: 10px; color: #666; margin-top: 10px;">Auto-navigates in 2 seconds...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Home Screen -->
+            <div class="screen">
+                <div class="screen-title">Screen 2: Home (Main Dashboard)</div>
+                <div class="screen-content">
+                    <div class="header">RAPID REACH</div>
+                    
+                    <div class="status-card">
+                        <span class="status-label">Status</span>
+                        <span class="status-value">
+                            <span class="status-indicator indicator-active"></span>
+                            Active
+                        </span>
+                    </div>
+
+                    <div class="status-card">
+                        <span class="status-label">Monitoring</span>
+                        <span class="status-value status-active">Ready</span>
+                    </div>
+
+                    <div class="metric">
+                        <div class="metric-label">Heart Rate</div>
+                        <div class="metric-value"><span class="placeholder">-- BPM</span></div>
+                    </div>
+
+                    <div class="metric">
+                        <div class="metric-label">SpO₂</div>
+                        <div class="metric-value"><span class="placeholder">-- %</span></div>
+                    </div>
+
+                    <div class="metric">
+                        <div class="metric-label">Motion</div>
+                        <div class="metric-value">Normal</div>
+                    </div>
+
+                    <button class="btn-large">SOS</button>
+
+                    <div class="quick-links">
+                        <div class="quick-link">📊 Sensors</div>
+                        <div class="quick-link">📱 Mobile</div>
+                        <div class="quick-link">🔐 Permissions</div>
+                        <div class="quick-link">⚙️ Settings</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SOS Screen -->
+            <div class="screen">
+                <div class="screen-title">Screen 3: SOS Emergency</div>
+                <div class="screen-content">
+                    <div class="back-button">← Back</div>
+                    <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                        <div style="font-size: 14px; color: #E63946; margin-bottom: 20px; font-weight: bold;">Press and Hold for 3 Seconds</div>
+                        <button class="btn-large">SOS</button>
+                        <div style="font-size: 10px; color: #666; margin-top: 20px; text-align: center;">Hold down for safety confirmation</div>
+                    </div>
+                    <div class="message">
+                        <strong>Demo Mode:</strong> Real emergency transmission coming in Phase 2
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sensor Status Screen -->
+            <div class="screen">
+                <div class="screen-title">Screen 4: Sensor Status</div>
+                <div class="screen-content">
+                    <div class="back-button">← Back</div>
+                    
+                    <div class="section-title">Sensors</div>
+                    
+                    <div class="status-card">
+                        <span class="status-label">Heart Rate</span>
+                        <span class="status-value status-inactive">Not Available</span>
+                    </div>
+
+                    <div class="status-card">
+                        <span class="status-label">SpO₂</span>
+                        <span class="status-value status-inactive">Not Available</span>
+                    </div>
+
+                    <div class="status-card">
+                        <span class="status-label">Accelerometer</span>
+                        <span class="status-value status-active">Ready</span>
+                    </div>
+
+                    <div class="status-card">
+                        <span class="status-label">Gyroscope</span>
+                        <span class="status-value status-active">Ready</span>
+                    </div>
+
+                    <div class="message" style="margin-top: 15px;">
+                        Heart rate and SpO₂ sensors will be initialized in Phase 2...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Connection Screen -->
+            <div class="screen">
+                <div class="screen-title">Screen 5: Mobile Connection</div>
+                <div class="screen-content">
+                    <div class="back-button">← Back</div>
+                    
+                    <div class="section-title">Mobile Connection</div>
+                    
+                    <div class="status-card">
+                        <span class="status-label">Status</span>
+                        <span class="status-value status-inactive">
+                            <span class="status-indicator indicator-inactive"></span>
+                            Not Connected
+                        </span>
+                    </div>
+
+                    <div class="status-card">
+                        <span class="status-label">Last Sync</span>
+                        <span class="status-value"><span class="placeholder">--:--:--</span></span>
+                    </div>
+
+                    <button class="btn-small btn-primary" style="margin-top: 10px;">Reconnect</button>
+
+                    <div class="message">
+                        Connection feature coming in Phase 2...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Permissions Screen -->
+            <div class="screen">
+                <div class="screen-title">Screen 6: Permissions</div>
+                <div class="screen-content">
+                    <div class="back-button">← Back</div>
+                    
+                    <div class="info-banner">
+                        ⓘ Permissions will be requested in Phase 2
+                    </div>
+
+                    <div class="permission-item">
+                        <div class="permission-title">Body Sensors</div>
+                        <div class="permission-desc">Heart rate, SpO₂</div>
+                        <div class="permission-status">Required</div>
+                    </div>
+
+                    <div class="permission-item">
+                        <div class="permission-title">Activity Recognition</div>
+                        <div class="permission-desc">Motion tracking</div>
+                        <div class="permission-status">Required</div>
+                    </div>
+
+                    <div class="permission-item">
+                        <div class="permission-title">Notifications</div>
+                        <div class="permission-desc">Alert messages</div>
+                        <div class="permission-status">Required</div>
+                    </div>
+
+                    <div class="permission-item">
+                        <div class="permission-title">Bluetooth</div>
+                        <div class="permission-desc">Connect to mobile</div>
+                        <div class="permission-status">Optional</div>
+                    </div>
+
+                    <div class="permission-item">
+                        <div class="permission-title">Location</div>
+                        <div class="permission-desc">Emergency response</div>
+                        <div class="permission-status">Optional</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Screen -->
+            <div class="screen">
+                <div class="screen-title">Screen 7: Settings</div>
+                <div class="screen-content">
+                    <div class="back-button">← Back</div>
+                    
+                    <div class="section-title">Status</div>
+
+                    <div class="setting-item">
+                        <span class="setting-label">Monitoring</span>
+                        <span class="setting-value">Ready</span>
+                    </div>
+
+                    <div class="setting-item">
+                        <span class="setting-label">Watch Connection</span>
+                        <span class="setting-value status-inactive">Not Connected</span>
+                    </div>
+
+                    <div style="border-top: 1px solid #333; margin: 10px 0;"></div>
+
+                    <div class="setting-item" style="border-bottom: none; cursor: pointer;">
+                        <span class="setting-label">→ Permissions</span>
+                    </div>
+
+                    <div class="about-box">
+                        <div class="about-item">
+                            <span class="about-label">App Name</span>
+                            <span class="about-value">RAPID REACH</span>
+                        </div>
+                        <div class="about-item">
+                            <span class="about-label">Version</span>
+                            <span class="about-value">1.0.0</span>
+                        </div>
+                        <div class="about-item">
+                            <span class="about-label">Module</span>
+                            <span class="about-value">Wear OS</span>
+                        </div>
+                        <div class="about-item">
+                            <span class="about-label">Phase</span>
+                            <span class="about-value"><span class="phase-badge">Breakpoint 1</span></span>
+                        </div>
+                    </div>
+
+                    <div class="message" style="margin-top: 12px; font-size: 10px;">
+                        Full feature implementation in Phase 2...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top: 50px; padding: 20px; background: rgba(230, 57, 70, 0.1); border: 1px solid #E63946; border-radius: 8px;">
+            <h2 style="color: #E63946; margin-bottom: 15px;">📊 Implementation Summary</h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
+                <div>
+                    <h3 style="color: #4ade80; margin-bottom: 8px;">✅ Completed</h3>
+                    <ul style="list-style: none; color: #ccc; font-size: 13px; line-height: 1.8;">
+                        <li>✓ 7 fully functional screens</li>
+                        <li>✓ Complete navigation system</li>
+                        <li>✓ Professional emergency theme</li>
+                        <li>✓ 9 reusable UI components</li>
+                        <li>✓ Wear OS optimized design</li>
+                        <li>✓ 14 Kotlin files created</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 style="color: #E63946; margin-bottom: 8px;">❌ NOT Implemented (As Required)</h3>
+                    <ul style="list-style: none; color: #ccc; font-size: 13px; line-height: 1.8;">
+                        <li>✗ No real sensor access</li>
+                        <li>✗ No Bluetooth communication</li>
+                        <li>✗ No Wear OS Data Layer</li>
+                        <li>✗ No Firebase integration</li>
+                        <li>✗ No backend API calls</li>
+                        <li>✗ No emergency transmission</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 style="color: #999; margin-bottom: 8px;">📋 Next Steps</h3>
+                    <ul style="list-style: none; color: #ccc; font-size: 13px; line-height: 1.8;">
+                        <li>1. Build locally: <code style="background: #0F0F0F; padding: 2px 6px; border-radius: 3px;">./gradlew build</code></li>
+                        <li>2. Install on device: <code style="background: #0F0F0F; padding: 2px 6px; border-radius: 3px;">adb install app.apk</code></li>
+                        <li>3. Test all screens</li>
+                        <li>4. Commit to feature branch</li>
+                        <li>5. Wait for team integration</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-top: 40px; color: #999; font-size: 12px;">
+            <p>This is a visual preview of the Wear OS app. To run the actual app, you need Android SDK and a device/emulator.</p>
+            <p style="margin-top: 10px;">📦 Repository: <strong>naancy1696/Rapid-Reach</strong> | 🌿 Branch: <strong>main</strong></p>
+        </div>
+    </div>
+</body>
+</html>

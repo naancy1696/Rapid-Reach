@@ -1,0 +1,2 @@
+# Wrapper files should not be committed
+gradle-wrapper.jar
