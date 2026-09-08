@@ -1,6 +1,9 @@
 import {onRequest, onCall, HttpsError} from "firebase-functions/v2/https";
 import {setGlobalOptions} from "firebase-functions/v2";
 import * as logger from "firebase-functions/logger";
+import {initializeApp} from "firebase-admin/app";
+
+initializeApp();
 
 setGlobalOptions({
   region: "asia-south1",
