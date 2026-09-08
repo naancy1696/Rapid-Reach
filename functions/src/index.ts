@@ -92,6 +92,34 @@ interface ContactFeatures {
   isLikelySpam?: boolean;
 }
 
+/**
+ * Restricts a score to the range 0 to 100.
+ *
+ * @param {number} value Score value.
+ * @return {number} Score limited to 0-100.
+ */
+function clampScore(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+/**
+ * Calculates the percentage of calls that were answered.
+ *
+ * @param {number} answeredCalls Number of answered calls.
+ * @param {number} callCount Total number of calls.
+ * @return {number} Answer-rate score from 0 to 100.
+ */
+function calculateAnswerRateScore(
+  answeredCalls: number,
+  callCount: number
+): number {
+  if (callCount <= 0) {
+    return 0;
+  }
+
+  return clampScore((answeredCalls / callCount) * 100);
+}
+
 export const startEmergency = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError(
@@ -160,6 +188,11 @@ export const saveContactFeatures = onCall(async (request) => {
 
   const uid = request.auth.uid;
 
+  const answerRateScore = calculateAnswerRateScore(
+    data.answeredCalls ?? 0,
+    data.callCount ?? 0
+  );
+
   await db
     .collection("users")
     .doc(uid)
@@ -178,6 +211,7 @@ export const saveContactFeatures = onCall(async (request) => {
         communicationDays: data.communicationDays ?? 0,
         isLikelyBusiness: data.isLikelyBusiness ?? false,
         isLikelySpam: data.isLikelySpam ?? false,
+        answerRateScore: answerRateScore,
         updatedAt: FieldValue.serverTimestamp(),
       },
       {merge: true}
@@ -186,5 +220,6 @@ export const saveContactFeatures = onCall(async (request) => {
   return {
     success: true,
     contactId: data.contactId,
+    answerRateScore: answerRateScore,
   };
 });
