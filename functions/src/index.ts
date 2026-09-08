@@ -247,6 +247,44 @@ function calculateSpamBusinessScore(
   return 100;
 }
 
+/**
+ * Calculates the final weighted trust score.
+ *
+ * Weights:
+ * Answer Rate = 25%
+ * Frequency = 20%
+ * Duration = 15%
+ * Consistency = 15%
+ * Recency = 15%
+ * Spam/Business Reliability = 10%
+ *
+ * @param {number} answerRateScore Answer-rate score.
+ * @param {number} frequencyScore Frequency score.
+ * @param {number} durationScore Duration score.
+ * @param {number} consistencyScore Consistency score.
+ * @param {number} recencyScore Recency score.
+ * @param {number} spamBusinessScore Spam/business reliability score.
+ * @return {number} Final trust score from 0 to 100.
+ */
+function calculateTrustScore(
+  answerRateScore: number,
+  frequencyScore: number,
+  durationScore: number,
+  consistencyScore: number,
+  recencyScore: number,
+  spamBusinessScore: number
+): number {
+  const weightedScore =
+    answerRateScore * 0.25 +
+    frequencyScore * 0.20 +
+    durationScore * 0.15 +
+    consistencyScore * 0.15 +
+    recencyScore * 0.15 +
+    spamBusinessScore * 0.10;
+
+  return Math.round(clampScore(weightedScore));
+}
+
 export const startEmergency = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError(
@@ -350,6 +388,15 @@ export const saveContactFeatures = onCall(async (request) => {
     isLikelySpam
   );
 
+  const trustScore = calculateTrustScore(
+    answerRateScore,
+    frequencyScore,
+    durationScore,
+    consistencyScore,
+    recencyScore,
+    spamBusinessScore
+  );
+
   await db
     .collection("users")
     .doc(uid)
@@ -378,6 +425,8 @@ export const saveContactFeatures = onCall(async (request) => {
         recencyScore: recencyScore,
         spamBusinessScore: spamBusinessScore,
 
+        trustScore: trustScore,
+
         updatedAt: FieldValue.serverTimestamp(),
       },
       {merge: true}
@@ -392,5 +441,6 @@ export const saveContactFeatures = onCall(async (request) => {
     consistencyScore: consistencyScore,
     recencyScore: recencyScore,
     spamBusinessScore: spamBusinessScore,
+    trustScore: trustScore,
   };
 });
