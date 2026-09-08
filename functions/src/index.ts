@@ -78,6 +78,20 @@ interface EmergencyEventData {
   };
 }
 
+interface ContactFeatures {
+  contactId: string;
+  displayName?: string;
+  phoneHash: string;
+  callCount: number;
+  answeredCalls: number;
+  missedCalls: number;
+  totalDurationSeconds: number;
+  lastContactAt?: string;
+  communicationDays: number;
+  isLikelyBusiness?: boolean;
+  isLikelySpam?: boolean;
+}
+
 export const startEmergency = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError(
@@ -124,5 +138,53 @@ export const startEmergency = onCall(async (request) => {
     success: true,
     emergencyId: data.eventId,
     status: "PENDING",
+  };
+});
+
+export const saveContactFeatures = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError(
+      "unauthenticated",
+      "You must be signed in to save contact features."
+    );
+  }
+
+  const data = request.data as ContactFeatures;
+
+  if (!data.contactId || !data.phoneHash) {
+    throw new HttpsError(
+      "invalid-argument",
+      "contactId and phoneHash are required."
+    );
+  }
+
+  const uid = request.auth.uid;
+
+  await db
+    .collection("users")
+    .doc(uid)
+    .collection("contacts")
+    .doc(data.contactId)
+    .set(
+      {
+        contactId: data.contactId,
+        displayName: data.displayName ?? null,
+        phoneHash: data.phoneHash,
+        callCount: data.callCount ?? 0,
+        answeredCalls: data.answeredCalls ?? 0,
+        missedCalls: data.missedCalls ?? 0,
+        totalDurationSeconds: data.totalDurationSeconds ?? 0,
+        lastContactAt: data.lastContactAt ?? null,
+        communicationDays: data.communicationDays ?? 0,
+        isLikelyBusiness: data.isLikelyBusiness ?? false,
+        isLikelySpam: data.isLikelySpam ?? false,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      {merge: true}
+    );
+
+  return {
+    success: true,
+    contactId: data.contactId,
   };
 });
