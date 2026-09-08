@@ -106,6 +106,21 @@ interface EscalationRequest {
   eventId: string;
 }
 
+interface EscalationProgressRequest {
+  eventId: string;
+  attemptResult: "ANSWERED" | "NO_RESPONSE" | "FAILED";
+}
+
+interface EscalationPlanItem {
+  escalationOrder: number;
+  contactId: string;
+  displayName: string | null;
+  phoneHash: string | null;
+  trustScore: number;
+  isLikelyBusiness: boolean;
+  status: string;
+}
+
 /**
  * Restricts a score to the range 0 to 100.
  *
@@ -240,7 +255,6 @@ function calculateRecencyScore(
  * Normal personal contacts receive 100.
  * Likely business contacts receive 40.
  * Likely spam contacts receive 0.
- * Spam takes priority when both flags are true.
  *
  * @param {boolean} isLikelyBusiness Whether contact is likely a business.
  * @param {boolean} isLikelySpam Whether contact is likely spam.
@@ -264,19 +278,12 @@ function calculateSpamBusinessScore(
 /**
  * Calculates the final weighted trust score.
  *
- * Answer Rate = 25%
- * Frequency = 20%
- * Duration = 15%
- * Consistency = 15%
- * Recency = 15%
- * Spam/Business Reliability = 10%
- *
  * @param {number} answerRateScore Answer-rate score.
  * @param {number} frequencyScore Frequency score.
  * @param {number} durationScore Duration score.
  * @param {number} consistencyScore Consistency score.
  * @param {number} recencyScore Recency score.
- * @param {number} spamBusinessScore Spam/business reliability score.
+ * @param {number} spamBusinessScore Reliability score.
  * @return {number} Final trust score from 0 to 100.
  */
 function calculateTrustScore(
@@ -420,17 +427,14 @@ export const saveContactFeatures = onCall(async (request) => {
         contactId: data.contactId,
         displayName: data.displayName ?? null,
         phoneHash: data.phoneHash,
-
         callCount: callCount,
         answeredCalls: answeredCalls,
         missedCalls: data.missedCalls ?? 0,
         totalDurationSeconds: totalDurationSeconds,
         lastContactAt: lastContactAt ?? null,
         communicationDays: communicationDays,
-
         isLikelyBusiness: isLikelyBusiness,
         isLikelySpam: isLikelySpam,
-
         answerRateScore: answerRateScore,
         frequencyScore: frequencyScore,
         durationScore: durationScore,
@@ -438,7 +442,6 @@ export const saveContactFeatures = onCall(async (request) => {
         recencyScore: recencyScore,
         spamBusinessScore: spamBusinessScore,
         trustScore: trustScore,
-
         updatedAt: FieldValue.serverTimestamp(),
       },
       {merge: true}
@@ -639,6 +642,170 @@ export const prepareEmergencyEscalation = onCall(
       totalEscalationContacts:
         escalationPlan.length,
       escalationPlan: escalationPlan,
+    };
+  }
+);
+
+export const advanceEmergencyEscalation = onCall(
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "You must be signed in to advance emergency escalation."
+      );
+    }
+
+    const data = request.data as EscalationProgressRequest;
+
+    if (!data.eventId || !data.attemptResult) {
+      throw new HttpsError(
+        "invalid-argument",
+        "eventId and attemptResult are required."
+      );
+    }
+
+    const allowedResults = [
+      "ANSWERED",
+      "NO_RESPONSE",
+      "FAILED",
+    ];
+
+    if (!allowedResults.includes(data.attemptResult)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Invalid attemptResult."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const emergencyRef = db
+      .collection("users")
+      .doc(uid)
+      .collection("emergencies")
+      .doc(data.eventId);
+
+    const emergencySnapshot = await emergencyRef.get();
+
+    if (!emergencySnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "Emergency event was not found."
+      );
+    }
+
+    const emergencyData = emergencySnapshot.data();
+
+    const escalationPlan =
+      emergencyData?.escalationPlan as
+        EscalationPlanItem[] | undefined;
+
+    if (!escalationPlan || escalationPlan.length === 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Emergency escalation plan is not available."
+      );
+    }
+
+    const currentIndex =
+      typeof emergencyData?.currentEscalationIndex === "number" ?
+        emergencyData.currentEscalationIndex :
+        0;
+
+    if (
+      currentIndex < 0 ||
+      currentIndex >= escalationPlan.length
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Current escalation index is invalid."
+      );
+    }
+
+    const updatedPlan = escalationPlan.map((item) => {
+      return {...item};
+    });
+
+    const currentContact = updatedPlan[currentIndex];
+
+    if (data.attemptResult === "ANSWERED") {
+      currentContact.status = "ANSWERED";
+
+      await emergencyRef.set(
+        {
+          escalationPlan: updatedPlan,
+          currentEscalationIndex: currentIndex,
+          status: "CONTACT_REACHED",
+          contactedContactId:
+            currentContact.contactId,
+          contactedAt:
+            FieldValue.serverTimestamp(),
+          updatedAt:
+            FieldValue.serverTimestamp(),
+        },
+        {merge: true}
+      );
+
+      return {
+        success: true,
+        emergencyId: data.eventId,
+        status: "CONTACT_REACHED",
+        currentContact: currentContact,
+        escalationComplete: true,
+      };
+    }
+
+    if (data.attemptResult === "NO_RESPONSE") {
+      currentContact.status = "NO_RESPONSE";
+    }
+
+    if (data.attemptResult === "FAILED") {
+      currentContact.status = "FAILED";
+    }
+
+    const nextIndex = currentIndex + 1;
+
+    if (nextIndex >= updatedPlan.length) {
+      await emergencyRef.set(
+        {
+          escalationPlan: updatedPlan,
+          currentEscalationIndex: currentIndex,
+          status: "ESCALATION_EXHAUSTED",
+          updatedAt:
+            FieldValue.serverTimestamp(),
+        },
+        {merge: true}
+      );
+
+      return {
+        success: true,
+        emergencyId: data.eventId,
+        status: "ESCALATION_EXHAUSTED",
+        escalationComplete: true,
+        nextContact: null,
+      };
+    }
+
+    updatedPlan[nextIndex].status = "NEXT";
+
+    await emergencyRef.set(
+      {
+        escalationPlan: updatedPlan,
+        currentEscalationIndex: nextIndex,
+        status: "ESCALATING",
+        updatedAt:
+          FieldValue.serverTimestamp(),
+      },
+      {merge: true}
+    );
+
+    return {
+      success: true,
+      emergencyId: data.eventId,
+      status: "ESCALATING",
+      escalationComplete: false,
+      currentEscalationIndex: nextIndex,
+      nextContact: updatedPlan[nextIndex],
     };
   }
 );
