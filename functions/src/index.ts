@@ -181,6 +181,45 @@ function calculateConsistencyScore(communicationDays: number): number {
   );
 }
 
+/**
+ * Calculates communication-recency score.
+ *
+ * A recently contacted person receives a higher score.
+ * Contacts older than 30 days receive a score of zero.
+ *
+ * @param {string|undefined} lastContactAt Last contact timestamp.
+ * @return {number} Recency score from 0 to 100.
+ */
+function calculateRecencyScore(
+  lastContactAt?: string
+): number {
+  if (!lastContactAt) {
+    return 0;
+  }
+
+  const lastContactTime = new Date(lastContactAt).getTime();
+
+  if (Number.isNaN(lastContactTime)) {
+    return 0;
+  }
+
+  const now = Date.now();
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+
+  const daysSinceLastContact = Math.max(
+    0,
+    (now - lastContactTime) / millisecondsPerDay
+  );
+
+  const recencyThresholdDays = 30;
+
+  const score =
+    100 -
+    (daysSinceLastContact / recencyThresholdDays) * 100;
+
+  return Math.round(clampScore(score));
+}
+
 export const startEmergency = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError(
@@ -253,6 +292,7 @@ export const saveContactFeatures = onCall(async (request) => {
   const answeredCalls = data.answeredCalls ?? 0;
   const totalDurationSeconds = data.totalDurationSeconds ?? 0;
   const communicationDays = data.communicationDays ?? 0;
+  const lastContactAt = data.lastContactAt;
 
   const answerRateScore = calculateAnswerRateScore(
     answeredCalls,
@@ -271,6 +311,10 @@ export const saveContactFeatures = onCall(async (request) => {
     communicationDays
   );
 
+  const recencyScore = calculateRecencyScore(
+    lastContactAt
+  );
+
   await db
     .collection("users")
     .doc(uid)
@@ -286,7 +330,7 @@ export const saveContactFeatures = onCall(async (request) => {
         answeredCalls: answeredCalls,
         missedCalls: data.missedCalls ?? 0,
         totalDurationSeconds: totalDurationSeconds,
-        lastContactAt: data.lastContactAt ?? null,
+        lastContactAt: lastContactAt ?? null,
         communicationDays: communicationDays,
 
         isLikelyBusiness: data.isLikelyBusiness ?? false,
@@ -296,6 +340,7 @@ export const saveContactFeatures = onCall(async (request) => {
         frequencyScore: frequencyScore,
         durationScore: durationScore,
         consistencyScore: consistencyScore,
+        recencyScore: recencyScore,
 
         updatedAt: FieldValue.serverTimestamp(),
       },
@@ -309,5 +354,6 @@ export const saveContactFeatures = onCall(async (request) => {
     frequencyScore: frequencyScore,
     durationScore: durationScore,
     consistencyScore: consistencyScore,
+    recencyScore: recencyScore,
   };
 });
