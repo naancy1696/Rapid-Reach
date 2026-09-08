@@ -92,6 +92,16 @@ interface ContactFeatures {
   isLikelySpam?: boolean;
 }
 
+interface RankedContact {
+  rank: number;
+  contactId: string;
+  displayName: string | null;
+  trustScore: number;
+  phoneHash: string | null;
+  isLikelyBusiness: boolean;
+  isLikelySpam: boolean;
+}
+
 /**
  * Restricts a score to the range 0 to 100.
  *
@@ -250,7 +260,6 @@ function calculateSpamBusinessScore(
 /**
  * Calculates the final weighted trust score.
  *
- * Weights:
  * Answer Rate = 25%
  * Frequency = 20%
  * Duration = 15%
@@ -424,7 +433,6 @@ export const saveContactFeatures = onCall(async (request) => {
         consistencyScore: consistencyScore,
         recencyScore: recencyScore,
         spamBusinessScore: spamBusinessScore,
-
         trustScore: trustScore,
 
         updatedAt: FieldValue.serverTimestamp(),
@@ -442,5 +450,70 @@ export const saveContactFeatures = onCall(async (request) => {
     recencyScore: recencyScore,
     spamBusinessScore: spamBusinessScore,
     trustScore: trustScore,
+  };
+});
+
+export const rankContacts = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError(
+      "unauthenticated",
+      "You must be signed in to rank contacts."
+    );
+  }
+
+  const uid = request.auth.uid;
+
+  const snapshot = await db
+    .collection("users")
+    .doc(uid)
+    .collection("contacts")
+    .get();
+
+  if (snapshot.empty) {
+    return {
+      success: true,
+      totalContacts: 0,
+      rankedContacts: [],
+    };
+  }
+
+  const contacts = snapshot.docs.map((doc) => {
+    const data = doc.data();
+
+    return {
+      contactId: data.contactId ?? doc.id,
+      displayName: data.displayName ?? null,
+      phoneHash: data.phoneHash ?? null,
+      trustScore:
+        typeof data.trustScore === "number" ?
+          data.trustScore :
+          0,
+      isLikelyBusiness: data.isLikelyBusiness ?? false,
+      isLikelySpam: data.isLikelySpam ?? false,
+    };
+  });
+
+  contacts.sort((a, b) => {
+    return b.trustScore - a.trustScore;
+  });
+
+  const rankedContacts: RankedContact[] = contacts.map(
+    (contact, index) => {
+      return {
+        rank: index + 1,
+        contactId: contact.contactId,
+        displayName: contact.displayName,
+        trustScore: contact.trustScore,
+        phoneHash: contact.phoneHash,
+        isLikelyBusiness: contact.isLikelyBusiness,
+        isLikelySpam: contact.isLikelySpam,
+      };
+    }
+  );
+
+  return {
+    success: true,
+    totalContacts: rankedContacts.length,
+    rankedContacts: rankedContacts,
   };
 });
