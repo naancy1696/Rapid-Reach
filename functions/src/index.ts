@@ -140,6 +140,26 @@ function calculateFrequencyScore(callCount: number): number {
   );
 }
 
+/**
+ * Calculates communication-duration score.
+ *
+ * A total duration of 7200 seconds or more receives the maximum score.
+ *
+ * @param {number} totalDurationSeconds Total communication duration.
+ * @return {number} Duration score from 0 to 100.
+ */
+function calculateDurationScore(totalDurationSeconds: number): number {
+  if (totalDurationSeconds <= 0) {
+    return 0;
+  }
+
+  const durationThresholdSeconds = 7200;
+
+  return clampScore(
+    (totalDurationSeconds / durationThresholdSeconds) * 100
+  );
+}
+
 export const startEmergency = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError(
@@ -210,6 +230,7 @@ export const saveContactFeatures = onCall(async (request) => {
 
   const callCount = data.callCount ?? 0;
   const answeredCalls = data.answeredCalls ?? 0;
+  const totalDurationSeconds = data.totalDurationSeconds ?? 0;
 
   const answerRateScore = calculateAnswerRateScore(
     answeredCalls,
@@ -218,6 +239,10 @@ export const saveContactFeatures = onCall(async (request) => {
 
   const frequencyScore = calculateFrequencyScore(
     callCount
+  );
+
+  const durationScore = calculateDurationScore(
+    totalDurationSeconds
   );
 
   await db
@@ -234,7 +259,7 @@ export const saveContactFeatures = onCall(async (request) => {
         callCount: callCount,
         answeredCalls: answeredCalls,
         missedCalls: data.missedCalls ?? 0,
-        totalDurationSeconds: data.totalDurationSeconds ?? 0,
+        totalDurationSeconds: totalDurationSeconds,
         lastContactAt: data.lastContactAt ?? null,
         communicationDays: data.communicationDays ?? 0,
 
@@ -243,6 +268,7 @@ export const saveContactFeatures = onCall(async (request) => {
 
         answerRateScore: answerRateScore,
         frequencyScore: frequencyScore,
+        durationScore: durationScore,
 
         updatedAt: FieldValue.serverTimestamp(),
       },
@@ -254,5 +280,6 @@ export const saveContactFeatures = onCall(async (request) => {
     contactId: data.contactId,
     answerRateScore: answerRateScore,
     frequencyScore: frequencyScore,
+    durationScore: durationScore,
   };
 });
