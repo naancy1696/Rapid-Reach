@@ -120,6 +120,26 @@ function calculateAnswerRateScore(
   return clampScore((answeredCalls / callCount) * 100);
 }
 
+/**
+ * Calculates communication-frequency score.
+ *
+ * A contact with 50 or more calls receives the maximum score.
+ *
+ * @param {number} callCount Total number of calls.
+ * @return {number} Frequency score from 0 to 100.
+ */
+function calculateFrequencyScore(callCount: number): number {
+  if (callCount <= 0) {
+    return 0;
+  }
+
+  const frequencyThreshold = 50;
+
+  return clampScore(
+    (callCount / frequencyThreshold) * 100
+  );
+}
+
 export const startEmergency = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError(
@@ -188,9 +208,16 @@ export const saveContactFeatures = onCall(async (request) => {
 
   const uid = request.auth.uid;
 
+  const callCount = data.callCount ?? 0;
+  const answeredCalls = data.answeredCalls ?? 0;
+
   const answerRateScore = calculateAnswerRateScore(
-    data.answeredCalls ?? 0,
-    data.callCount ?? 0
+    answeredCalls,
+    callCount
+  );
+
+  const frequencyScore = calculateFrequencyScore(
+    callCount
   );
 
   await db
@@ -203,15 +230,20 @@ export const saveContactFeatures = onCall(async (request) => {
         contactId: data.contactId,
         displayName: data.displayName ?? null,
         phoneHash: data.phoneHash,
-        callCount: data.callCount ?? 0,
-        answeredCalls: data.answeredCalls ?? 0,
+
+        callCount: callCount,
+        answeredCalls: answeredCalls,
         missedCalls: data.missedCalls ?? 0,
         totalDurationSeconds: data.totalDurationSeconds ?? 0,
         lastContactAt: data.lastContactAt ?? null,
         communicationDays: data.communicationDays ?? 0,
+
         isLikelyBusiness: data.isLikelyBusiness ?? false,
         isLikelySpam: data.isLikelySpam ?? false,
+
         answerRateScore: answerRateScore,
+        frequencyScore: frequencyScore,
+
         updatedAt: FieldValue.serverTimestamp(),
       },
       {merge: true}
@@ -221,5 +253,6 @@ export const saveContactFeatures = onCall(async (request) => {
     success: true,
     contactId: data.contactId,
     answerRateScore: answerRateScore,
+    frequencyScore: frequencyScore,
   };
 });
