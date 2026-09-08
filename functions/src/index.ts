@@ -102,6 +102,10 @@ interface RankedContact {
   isLikelySpam: boolean;
 }
 
+interface EscalationRequest {
+  eventId: string;
+}
+
 /**
  * Restricts a score to the range 0 to 100.
  *
@@ -517,3 +521,124 @@ export const rankContacts = onCall(async (request) => {
     rankedContacts: rankedContacts,
   };
 });
+
+export const prepareEmergencyEscalation = onCall(
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "You must be signed in to prepare emergency escalation."
+      );
+    }
+
+    const data = request.data as EscalationRequest;
+
+    if (!data.eventId) {
+      throw new HttpsError(
+        "invalid-argument",
+        "eventId is required."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const emergencyRef = db
+      .collection("users")
+      .doc(uid)
+      .collection("emergencies")
+      .doc(data.eventId);
+
+    const emergencySnapshot = await emergencyRef.get();
+
+    if (!emergencySnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "Emergency event was not found."
+      );
+    }
+
+    const contactsSnapshot = await db
+      .collection("users")
+      .doc(uid)
+      .collection("contacts")
+      .get();
+
+    if (contactsSnapshot.empty) {
+      throw new HttpsError(
+        "failed-precondition",
+        "No contacts are available for emergency escalation."
+      );
+    }
+
+    const eligibleContacts = contactsSnapshot.docs
+      .map((doc) => {
+        const contact = doc.data();
+
+        return {
+          contactId: contact.contactId ?? doc.id,
+          displayName: contact.displayName ?? null,
+          phoneHash: contact.phoneHash ?? null,
+          trustScore:
+            typeof contact.trustScore === "number" ?
+              contact.trustScore :
+              0,
+          isLikelyBusiness:
+            contact.isLikelyBusiness ?? false,
+          isLikelySpam:
+            contact.isLikelySpam ?? false,
+        };
+      })
+      .filter((contact) => {
+        return !contact.isLikelySpam;
+      });
+
+    if (eligibleContacts.length === 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "No eligible contacts are available for escalation."
+      );
+    }
+
+    eligibleContacts.sort((a, b) => {
+      return b.trustScore - a.trustScore;
+    });
+
+    const maximumEscalationContacts = 3;
+
+    const escalationPlan = eligibleContacts
+      .slice(0, maximumEscalationContacts)
+      .map((contact, index) => {
+        return {
+          escalationOrder: index + 1,
+          contactId: contact.contactId,
+          displayName: contact.displayName,
+          phoneHash: contact.phoneHash,
+          trustScore: contact.trustScore,
+          isLikelyBusiness: contact.isLikelyBusiness,
+          status: "WAITING",
+        };
+      });
+
+    await emergencyRef.set(
+      {
+        escalationPlan: escalationPlan,
+        currentEscalationIndex: 0,
+        status: "READY_FOR_ESCALATION",
+        escalationPreparedAt:
+          FieldValue.serverTimestamp(),
+        updatedAt:
+          FieldValue.serverTimestamp(),
+      },
+      {merge: true}
+    );
+
+    return {
+      success: true,
+      emergencyId: data.eventId,
+      status: "READY_FOR_ESCALATION",
+      totalEscalationContacts:
+        escalationPlan.length,
+      escalationPlan: escalationPlan,
+    };
+  }
+);
