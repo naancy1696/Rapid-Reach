@@ -1,4 +1,4 @@
-import {onRequest} from "firebase-functions/v2/https";
+import {onRequest, onCall, HttpsError} from "firebase-functions/v2/https";
 import {setGlobalOptions} from "firebase-functions/v2";
 import * as logger from "firebase-functions/logger";
 
@@ -15,4 +15,19 @@ export const healthCheck = onRequest((request, response) => {
     service: "rapid-reach-backend",
     status: "healthy",
   });
+});
+
+export const authenticatedTest = onCall((request) => {
+  if (!request.auth) {
+    throw new HttpsError(
+      "unauthenticated",
+      "You must be signed in to access this function."
+    );
+  }
+
+  return {
+    success: true,
+    message: "Authentication verified successfully.",
+    uid: request.auth.uid,
+  };
 });
