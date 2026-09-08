@@ -62,3 +62,67 @@ export const firestoreTest = onCall(async (request) => {
     uid: uid,
   };
 });
+
+interface EmergencyEventData {
+  eventId: string;
+  eventType: string;
+  timestamp: string;
+  source: string;
+  location?: {
+    latitude: number;
+    longitude: number;
+  };
+  sensorData?: {
+    heartRate?: number;
+    spo2?: number;
+  };
+}
+
+export const startEmergency = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError(
+      "unauthenticated",
+      "You must be signed in to start an emergency."
+    );
+  }
+
+  const data = request.data as EmergencyEventData;
+
+  if (
+    !data.eventId ||
+    !data.eventType ||
+    !data.timestamp ||
+    !data.source
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "eventId, eventType, timestamp, and source are required."
+    );
+  }
+
+  const uid = request.auth.uid;
+
+  await db
+    .collection("users")
+    .doc(uid)
+    .collection("emergencies")
+    .doc(data.eventId)
+    .set({
+      eventId: data.eventId,
+      userId: uid,
+      eventType: data.eventType,
+      timestamp: data.timestamp,
+      source: data.source,
+      location: data.location ?? null,
+      sensorData: data.sensorData ?? null,
+      status: "PENDING",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+  return {
+    success: true,
+    emergencyId: data.eventId,
+    status: "PENDING",
+  };
+});
