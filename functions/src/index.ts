@@ -220,6 +220,33 @@ function calculateRecencyScore(
   return Math.round(clampScore(score));
 }
 
+/**
+ * Calculates the spam/business reliability score.
+ *
+ * Normal personal contacts receive 100.
+ * Likely business contacts receive 40.
+ * Likely spam contacts receive 0.
+ * Spam takes priority when both flags are true.
+ *
+ * @param {boolean} isLikelyBusiness Whether contact is likely a business.
+ * @param {boolean} isLikelySpam Whether contact is likely spam.
+ * @return {number} Reliability score from 0 to 100.
+ */
+function calculateSpamBusinessScore(
+  isLikelyBusiness: boolean,
+  isLikelySpam: boolean
+): number {
+  if (isLikelySpam) {
+    return 0;
+  }
+
+  if (isLikelyBusiness) {
+    return 40;
+  }
+
+  return 100;
+}
+
 export const startEmergency = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError(
@@ -294,6 +321,9 @@ export const saveContactFeatures = onCall(async (request) => {
   const communicationDays = data.communicationDays ?? 0;
   const lastContactAt = data.lastContactAt;
 
+  const isLikelyBusiness = data.isLikelyBusiness ?? false;
+  const isLikelySpam = data.isLikelySpam ?? false;
+
   const answerRateScore = calculateAnswerRateScore(
     answeredCalls,
     callCount
@@ -315,6 +345,11 @@ export const saveContactFeatures = onCall(async (request) => {
     lastContactAt
   );
 
+  const spamBusinessScore = calculateSpamBusinessScore(
+    isLikelyBusiness,
+    isLikelySpam
+  );
+
   await db
     .collection("users")
     .doc(uid)
@@ -333,14 +368,15 @@ export const saveContactFeatures = onCall(async (request) => {
         lastContactAt: lastContactAt ?? null,
         communicationDays: communicationDays,
 
-        isLikelyBusiness: data.isLikelyBusiness ?? false,
-        isLikelySpam: data.isLikelySpam ?? false,
+        isLikelyBusiness: isLikelyBusiness,
+        isLikelySpam: isLikelySpam,
 
         answerRateScore: answerRateScore,
         frequencyScore: frequencyScore,
         durationScore: durationScore,
         consistencyScore: consistencyScore,
         recencyScore: recencyScore,
+        spamBusinessScore: spamBusinessScore,
 
         updatedAt: FieldValue.serverTimestamp(),
       },
@@ -355,5 +391,6 @@ export const saveContactFeatures = onCall(async (request) => {
     durationScore: durationScore,
     consistencyScore: consistencyScore,
     recencyScore: recencyScore,
+    spamBusinessScore: spamBusinessScore,
   };
 });
