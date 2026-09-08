@@ -160,6 +160,27 @@ function calculateDurationScore(totalDurationSeconds: number): number {
   );
 }
 
+/**
+ * Calculates communication-consistency score.
+ *
+ * A contact communicated with on 30 or more different days
+ * receives the maximum score.
+ *
+ * @param {number} communicationDays Number of communication days.
+ * @return {number} Consistency score from 0 to 100.
+ */
+function calculateConsistencyScore(communicationDays: number): number {
+  if (communicationDays <= 0) {
+    return 0;
+  }
+
+  const consistencyThresholdDays = 30;
+
+  return clampScore(
+    (communicationDays / consistencyThresholdDays) * 100
+  );
+}
+
 export const startEmergency = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError(
@@ -231,6 +252,7 @@ export const saveContactFeatures = onCall(async (request) => {
   const callCount = data.callCount ?? 0;
   const answeredCalls = data.answeredCalls ?? 0;
   const totalDurationSeconds = data.totalDurationSeconds ?? 0;
+  const communicationDays = data.communicationDays ?? 0;
 
   const answerRateScore = calculateAnswerRateScore(
     answeredCalls,
@@ -243,6 +265,10 @@ export const saveContactFeatures = onCall(async (request) => {
 
   const durationScore = calculateDurationScore(
     totalDurationSeconds
+  );
+
+  const consistencyScore = calculateConsistencyScore(
+    communicationDays
   );
 
   await db
@@ -261,7 +287,7 @@ export const saveContactFeatures = onCall(async (request) => {
         missedCalls: data.missedCalls ?? 0,
         totalDurationSeconds: totalDurationSeconds,
         lastContactAt: data.lastContactAt ?? null,
-        communicationDays: data.communicationDays ?? 0,
+        communicationDays: communicationDays,
 
         isLikelyBusiness: data.isLikelyBusiness ?? false,
         isLikelySpam: data.isLikelySpam ?? false,
@@ -269,6 +295,7 @@ export const saveContactFeatures = onCall(async (request) => {
         answerRateScore: answerRateScore,
         frequencyScore: frequencyScore,
         durationScore: durationScore,
+        consistencyScore: consistencyScore,
 
         updatedAt: FieldValue.serverTimestamp(),
       },
@@ -281,5 +308,6 @@ export const saveContactFeatures = onCall(async (request) => {
     answerRateScore: answerRateScore,
     frequencyScore: frequencyScore,
     durationScore: durationScore,
+    consistencyScore: consistencyScore,
   };
 });
