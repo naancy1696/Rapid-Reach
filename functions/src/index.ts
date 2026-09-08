@@ -2,7 +2,11 @@ import {onRequest, onCall, HttpsError} from "firebase-functions/v2/https";
 import {setGlobalOptions} from "firebase-functions/v2";
 import * as logger from "firebase-functions/logger";
 import {initializeApp} from "firebase-admin/app";
-import {getFirestore, FieldValue} from "firebase-admin/firestore";
+import {
+  getFirestore,
+  FieldValue,
+  Timestamp,
+} from "firebase-admin/firestore";
 
 initializeApp();
 
@@ -119,6 +123,15 @@ interface EscalationPlanItem {
   trustScore: number;
   isLikelyBusiness: boolean;
   status: string;
+}
+
+interface AttemptHistoryItem {
+  escalationOrder: number;
+  contactId: string;
+  displayName: string | null;
+  trustScore: number;
+  result: "ANSWERED" | "NO_RESPONSE" | "FAILED";
+  attemptedAt: Timestamp;
 }
 
 /**
@@ -278,6 +291,13 @@ function calculateSpamBusinessScore(
 /**
  * Calculates the final weighted trust score.
  *
+ * Answer Rate = 25%
+ * Frequency = 20%
+ * Duration = 15%
+ * Consistency = 15%
+ * Recency = 15%
+ * Spam/Business Reliability = 10%
+ *
  * @param {number} answerRateScore Answer-rate score.
  * @param {number} frequencyScore Frequency score.
  * @param {number} durationScore Duration score.
@@ -343,6 +363,7 @@ export const startEmergency = onCall(async (request) => {
       location: data.location ?? null,
       sensorData: data.sensorData ?? null,
       status: "PENDING",
+      attemptHistory: [],
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
@@ -626,6 +647,7 @@ export const prepareEmergencyEscalation = onCall(
       {
         escalationPlan: escalationPlan,
         currentEscalationIndex: 0,
+        attemptHistory: [],
         status: "READY_FOR_ESCALATION",
         escalationPreparedAt:
           FieldValue.serverTimestamp(),
@@ -696,6 +718,16 @@ export const advanceEmergencyEscalation = onCall(
 
     const emergencyData = emergencySnapshot.data();
 
+    if (
+      emergencyData?.status === "CONTACT_REACHED" ||
+      emergencyData?.status === "ESCALATION_EXHAUSTED"
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Emergency escalation is already complete."
+      );
+    }
+
     const escalationPlan =
       emergencyData?.escalationPlan as
         EscalationPlanItem[] | undefined;
@@ -728,12 +760,32 @@ export const advanceEmergencyEscalation = onCall(
 
     const currentContact = updatedPlan[currentIndex];
 
+    const existingAttemptHistory =
+      Array.isArray(emergencyData?.attemptHistory) ?
+        emergencyData.attemptHistory as AttemptHistoryItem[] :
+        [];
+
+    const attemptRecord: AttemptHistoryItem = {
+      escalationOrder: currentContact.escalationOrder,
+      contactId: currentContact.contactId,
+      displayName: currentContact.displayName,
+      trustScore: currentContact.trustScore,
+      result: data.attemptResult,
+      attemptedAt: Timestamp.now(),
+    };
+
+    const updatedAttemptHistory = [
+      ...existingAttemptHistory,
+      attemptRecord,
+    ];
+
     if (data.attemptResult === "ANSWERED") {
       currentContact.status = "ANSWERED";
 
       await emergencyRef.set(
         {
           escalationPlan: updatedPlan,
+          attemptHistory: updatedAttemptHistory,
           currentEscalationIndex: currentIndex,
           status: "CONTACT_REACHED",
           contactedContactId:
@@ -752,6 +804,8 @@ export const advanceEmergencyEscalation = onCall(
         status: "CONTACT_REACHED",
         currentContact: currentContact,
         escalationComplete: true,
+        attemptHistoryCount:
+          updatedAttemptHistory.length,
       };
     }
 
@@ -769,6 +823,7 @@ export const advanceEmergencyEscalation = onCall(
       await emergencyRef.set(
         {
           escalationPlan: updatedPlan,
+          attemptHistory: updatedAttemptHistory,
           currentEscalationIndex: currentIndex,
           status: "ESCALATION_EXHAUSTED",
           updatedAt:
@@ -783,6 +838,8 @@ export const advanceEmergencyEscalation = onCall(
         status: "ESCALATION_EXHAUSTED",
         escalationComplete: true,
         nextContact: null,
+        attemptHistoryCount:
+          updatedAttemptHistory.length,
       };
     }
 
@@ -791,6 +848,7 @@ export const advanceEmergencyEscalation = onCall(
     await emergencyRef.set(
       {
         escalationPlan: updatedPlan,
+        attemptHistory: updatedAttemptHistory,
         currentEscalationIndex: nextIndex,
         status: "ESCALATING",
         updatedAt:
@@ -806,6 +864,8 @@ export const advanceEmergencyEscalation = onCall(
       escalationComplete: false,
       currentEscalationIndex: nextIndex,
       nextContact: updatedPlan[nextIndex],
+      attemptHistoryCount:
+        updatedAttemptHistory.length,
     };
   }
 );
