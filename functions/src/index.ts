@@ -403,26 +403,37 @@ export const startEmergency = onCall(async (request) => {
 
   const uid = request.auth.uid;
 
-  const initialStatus: EmergencyStatus = "PENDING";
-
-  await db
+  const emergencyRef = db
     .collection("users")
     .doc(uid)
     .collection("emergencies")
-    .doc(data.eventId)
-    .set({
-      eventId: data.eventId,
-      userId: uid,
-      eventType: data.eventType,
-      timestamp: data.timestamp,
-      source: data.source,
-      location: data.location ?? null,
-      sensorData: data.sensorData ?? null,
-      status: initialStatus,
-      attemptHistory: [],
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    .doc(data.eventId);
+
+  const existingEmergency =
+    await emergencyRef.get();
+
+  if (existingEmergency.exists) {
+    throw new HttpsError(
+      "already-exists",
+      "An emergency with this eventId already exists."
+    );
+  }
+
+  const initialStatus: EmergencyStatus = "PENDING";
+
+  await emergencyRef.set({
+    eventId: data.eventId,
+    userId: uid,
+    eventType: data.eventType,
+    timestamp: data.timestamp,
+    source: data.source,
+    location: data.location ?? null,
+    sensorData: data.sensorData ?? null,
+    status: initialStatus,
+    attemptHistory: [],
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 
   return {
     success: true,
