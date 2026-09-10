@@ -195,6 +195,10 @@ interface CancelEmergencyRequest {
   reason?: string;
 }
 
+interface GetEmergencyStatusRequest {
+  eventId: string;
+}
+
 interface EscalationPlanItem {
   escalationOrder: number;
   contactId: string;
@@ -1519,5 +1523,134 @@ export const cancelEmergency = onCall(
       );
 
     return result;
+  }
+);
+
+export const getEmergencyStatus = onCall(
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "You must be signed in to " +
+        "get emergency status."
+      );
+    }
+
+    const data =
+      request.data as
+        GetEmergencyStatusRequest;
+
+    if (!data.eventId) {
+      throw new HttpsError(
+        "invalid-argument",
+        "eventId is required."
+      );
+    }
+
+    const uid =
+      request.auth.uid;
+
+    const emergencyRef =
+      db
+        .collection("users")
+        .doc(uid)
+        .collection("emergencies")
+        .doc(data.eventId);
+
+    const emergencySnapshot =
+      await emergencyRef.get();
+
+    if (!emergencySnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "Emergency event was not found."
+      );
+    }
+
+    const emergencyData =
+      emergencySnapshot.data();
+
+    if (!emergencyData) {
+      throw new HttpsError(
+        "not-found",
+        "Emergency data was not found."
+      );
+    }
+
+    const status =
+      emergencyData.status as
+        EmergencyStatus | undefined;
+
+    if (!status) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Emergency status is missing."
+      );
+    }
+
+    const escalationPlan =
+      Array.isArray(
+        emergencyData.escalationPlan
+      ) ?
+        emergencyData.escalationPlan :
+        [];
+
+    const attemptHistory =
+      Array.isArray(
+        emergencyData.attemptHistory
+      ) ?
+        emergencyData.attemptHistory :
+        [];
+
+    const currentEscalationIndex =
+      typeof emergencyData
+        .currentEscalationIndex ===
+      "number" ?
+        emergencyData
+          .currentEscalationIndex :
+        null;
+
+    return {
+      success: true,
+      emergencyId:
+        data.eventId,
+      status:
+        status,
+      eventType:
+        emergencyData.eventType ??
+        null,
+      timestamp:
+        emergencyData.timestamp ??
+        null,
+      source:
+        emergencyData.source ??
+        null,
+      location:
+        emergencyData.location ??
+        null,
+      sensorData:
+        emergencyData.sensorData ??
+        null,
+      currentEscalationIndex:
+        currentEscalationIndex,
+      escalationPlan:
+        escalationPlan,
+      attemptHistory:
+        attemptHistory,
+      contactedContactId:
+        emergencyData
+          .contactedContactId ??
+        null,
+      cancellationReason:
+        emergencyData
+          .cancellationReason ??
+        null,
+      createdAt:
+        emergencyData.createdAt ??
+        null,
+      updatedAt:
+        emergencyData.updatedAt ??
+        null,
+    };
   }
 );
