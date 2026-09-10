@@ -221,6 +221,34 @@ interface AttemptHistoryItem {
   attemptedAt: Timestamp;
 }
 
+interface StatusHistoryItem {
+  fromStatus: EmergencyStatus | null;
+  toStatus: EmergencyStatus;
+  changedAt: Timestamp;
+  reason: string;
+}
+
+/**
+ * Creates an emergency status history entry.
+ *
+ * @param {EmergencyStatus|null} fromStatus Previous status.
+ * @param {EmergencyStatus} toStatus New status.
+ * @param {string} reason Transition reason.
+ * @return {StatusHistoryItem} Status history item.
+ */
+function createStatusHistoryItem(
+  fromStatus: EmergencyStatus | null,
+  toStatus: EmergencyStatus,
+  reason: string
+): StatusHistoryItem {
+  return {
+    fromStatus: fromStatus,
+    toStatus: toStatus,
+    changedAt: Timestamp.now(),
+    reason: reason,
+  };
+}
+
 /**
  * Restricts a score to 0-100.
  *
@@ -471,6 +499,13 @@ export const startEmergency = onCall(
     const initialStatus:
       EmergencyStatus = "PENDING";
 
+    const initialHistory =
+      createStatusHistoryItem(
+        null,
+        initialStatus,
+        "EMERGENCY_STARTED"
+      );
+
     await emergencyRef.set({
       eventId: data.eventId,
       userId: uid,
@@ -483,12 +518,26 @@ export const startEmergency = onCall(
         data.sensorData ?? null,
       status:
         initialStatus,
+      statusHistory: [
+        initialHistory,
+      ],
       attemptHistory: [],
+      statusChangedAt:
+        FieldValue.serverTimestamp(),
       createdAt:
         FieldValue.serverTimestamp(),
       updatedAt:
         FieldValue.serverTimestamp(),
     });
+
+    logger.info(
+      "Emergency started",
+      {
+        uid: uid,
+        eventId: data.eventId,
+        status: initialStatus,
+      }
+    );
 
     return {
       success: true,
@@ -975,6 +1024,13 @@ export const prepareEmergencyEscalation =
             }
           );
 
+      const statusHistoryItem =
+        createStatusHistoryItem(
+          currentStatus,
+          "READY_FOR_ESCALATION",
+          "ESCALATION_PREPARED"
+        );
+
       await emergencyRef.set(
         {
           escalationPlan:
@@ -985,12 +1041,29 @@ export const prepareEmergencyEscalation =
             [],
           status:
             "READY_FOR_ESCALATION",
+          statusHistory:
+            FieldValue.arrayUnion(
+              statusHistoryItem
+            ),
+          statusChangedAt:
+            FieldValue.serverTimestamp(),
           escalationPreparedAt:
             FieldValue.serverTimestamp(),
           updatedAt:
             FieldValue.serverTimestamp(),
         },
         {merge: true}
+      );
+
+      logger.info(
+        "Emergency escalation prepared",
+        {
+          uid: uid,
+          eventId: data.eventId,
+          fromStatus: currentStatus,
+          toStatus:
+            "READY_FOR_ESCALATION",
+        }
       );
 
       return {
@@ -1230,6 +1303,13 @@ export const advanceEmergencyEscalation =
               currentContact.status =
                 "ANSWERED";
 
+              const historyItem =
+                createStatusHistoryItem(
+                  currentStatus,
+                  "CONTACT_REACHED",
+                  "CONTACT_ANSWERED"
+                );
+
               transaction.set(
                 emergencyRef,
                 {
@@ -1241,6 +1321,13 @@ export const advanceEmergencyEscalation =
                     currentIndex,
                   status:
                     "CONTACT_REACHED",
+                  statusHistory:
+                    FieldValue.arrayUnion(
+                      historyItem
+                    ),
+                  statusChangedAt:
+                    FieldValue
+                      .serverTimestamp(),
                   contactedContactId:
                     currentContact
                       .contactId,
@@ -1306,6 +1393,13 @@ export const advanceEmergencyEscalation =
                 );
               }
 
+              const historyItem =
+                createStatusHistoryItem(
+                  currentStatus,
+                  "ESCALATION_EXHAUSTED",
+                  "ALL_CONTACTS_EXHAUSTED"
+                );
+
               transaction.set(
                 emergencyRef,
                 {
@@ -1317,6 +1411,13 @@ export const advanceEmergencyEscalation =
                     currentIndex,
                   status:
                     "ESCALATION_EXHAUSTED",
+                  statusHistory:
+                    FieldValue.arrayUnion(
+                      historyItem
+                    ),
+                  statusChangedAt:
+                    FieldValue
+                      .serverTimestamp(),
                   updatedAt:
                     FieldValue
                       .serverTimestamp(),
@@ -1356,6 +1457,13 @@ export const advanceEmergencyEscalation =
             updatedPlan[nextIndex].status =
               "NEXT";
 
+            const historyItem =
+              createStatusHistoryItem(
+                currentStatus,
+                "ESCALATING",
+                "NEXT_CONTACT_SELECTED"
+              );
+
             transaction.set(
               emergencyRef,
               {
@@ -1367,6 +1475,13 @@ export const advanceEmergencyEscalation =
                   nextIndex,
                 status:
                   "ESCALATING",
+                statusHistory:
+                  FieldValue.arrayUnion(
+                    historyItem
+                  ),
+                statusChangedAt:
+                  FieldValue
+                    .serverTimestamp(),
                 updatedAt:
                   FieldValue
                     .serverTimestamp(),
@@ -1392,6 +1507,18 @@ export const advanceEmergencyEscalation =
             };
           }
         );
+
+      logger.info(
+        "Emergency escalation advanced",
+        {
+          uid: uid,
+          eventId: data.eventId,
+          attemptResult:
+            data.attemptResult,
+          status:
+            result.status,
+        }
+      );
 
       return result;
     }
@@ -1493,11 +1620,24 @@ export const cancelEmergency = onCall(
             );
           }
 
+          const historyItem =
+            createStatusHistoryItem(
+              currentStatus,
+              "CANCELLED",
+              "EMERGENCY_CANCELLED"
+            );
+
           transaction.set(
             emergencyRef,
             {
               status:
                 "CANCELLED",
+              statusHistory:
+                FieldValue.arrayUnion(
+                  historyItem
+                ),
+              statusChangedAt:
+                FieldValue.serverTimestamp(),
               cancellationReason:
                 data.reason ?? null,
               cancelledAt:
@@ -1521,6 +1661,18 @@ export const cancelEmergency = onCall(
           };
         }
       );
+
+    logger.info(
+      "Emergency cancelled",
+      {
+        uid: uid,
+        eventId: data.eventId,
+        previousStatus:
+          result.previousStatus,
+        reason:
+          data.reason ?? null,
+      }
+    );
 
     return result;
   }
@@ -1602,6 +1754,13 @@ export const getEmergencyStatus = onCall(
         emergencyData.attemptHistory :
         [];
 
+    const statusHistory =
+      Array.isArray(
+        emergencyData.statusHistory
+      ) ?
+        emergencyData.statusHistory :
+        [];
+
     const currentEscalationIndex =
       typeof emergencyData
         .currentEscalationIndex ===
@@ -1637,6 +1796,8 @@ export const getEmergencyStatus = onCall(
         escalationPlan,
       attemptHistory:
         attemptHistory,
+      statusHistory:
+        statusHistory,
       contactedContactId:
         emergencyData
           .contactedContactId ??
@@ -1644,6 +1805,22 @@ export const getEmergencyStatus = onCall(
       cancellationReason:
         emergencyData
           .cancellationReason ??
+        null,
+      statusChangedAt:
+        emergencyData
+          .statusChangedAt ??
+        null,
+      escalationPreparedAt:
+        emergencyData
+          .escalationPreparedAt ??
+        null,
+      contactedAt:
+        emergencyData
+          .contactedAt ??
+        null,
+      cancelledAt:
+        emergencyData
+          .cancelledAt ??
         null,
       createdAt:
         emergencyData.createdAt ??
