@@ -1,4 +1,8 @@
-import {onRequest, onCall, HttpsError} from "firebase-functions/v2/https";
+import {
+  onRequest,
+  onCall,
+  HttpsError,
+} from "firebase-functions/v2/https";
 import {setGlobalOptions} from "firebase-functions/v2";
 import * as logger from "firebase-functions/logger";
 import {initializeApp} from "firebase-admin/app";
@@ -64,58 +68,76 @@ function canTransitionEmergencyStatus(
   currentStatus: EmergencyStatus,
   nextStatus: EmergencyStatus
 ): boolean {
-  return emergencyStatusTransitions[currentStatus].includes(nextStatus);
+  return emergencyStatusTransitions[currentStatus]
+    .includes(nextStatus);
 }
 
-export const healthCheck = onRequest((request, response) => {
-  logger.info("Rapid Reach backend health check");
-
-  response.status(200).json({
-    success: true,
-    service: "rapid-reach-backend",
-    status: "healthy",
-  });
-});
-
-export const authenticatedTest = onCall((request) => {
-  if (!request.auth) {
-    throw new HttpsError(
-      "unauthenticated",
-      "You must be signed in to access this function."
+export const healthCheck = onRequest(
+  (request, response) => {
+    logger.info(
+      "Rapid Reach backend health check"
     );
+
+    response.status(200).json({
+      success: true,
+      service: "rapid-reach-backend",
+      status: "healthy",
+    });
   }
+);
 
-  return {
-    success: true,
-    message: "Authentication verified successfully.",
-    uid: request.auth.uid,
-  };
-});
+export const authenticatedTest = onCall(
+  (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "You must be signed in to " +
+        "access this function."
+      );
+    }
 
-export const firestoreTest = onCall(async (request) => {
-  if (!request.auth) {
-    throw new HttpsError(
-      "unauthenticated",
-      "You must be signed in to access this function."
-    );
+    return {
+      success: true,
+      message:
+        "Authentication verified successfully.",
+      uid: request.auth.uid,
+    };
   }
+);
 
-  const uid = request.auth.uid;
+export const firestoreTest = onCall(
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "You must be signed in to " +
+        "access this function."
+      );
+    }
 
-  await db.collection("users").doc(uid).set(
-    {
+    const uid = request.auth.uid;
+
+    await db
+      .collection("users")
+      .doc(uid)
+      .set(
+        {
+          uid: uid,
+          updatedAt:
+            FieldValue.serverTimestamp(),
+        },
+        {merge: true}
+      );
+
+    return {
+      success: true,
+      message:
+        "Firestore connection verified " +
+        "successfully.",
       uid: uid,
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    {merge: true}
-  );
-
-  return {
-    success: true,
-    message: "Firestore connection verified successfully.",
-    uid: uid,
-  };
-});
+    };
+  }
+);
 
 interface EmergencyEventData {
   eventId: string;
@@ -162,7 +184,15 @@ interface EscalationRequest {
 
 interface EscalationProgressRequest {
   eventId: string;
-  attemptResult: "ANSWERED" | "NO_RESPONSE" | "FAILED";
+  attemptResult:
+    | "ANSWERED"
+    | "NO_RESPONSE"
+    | "FAILED";
+}
+
+interface CancelEmergencyRequest {
+  eventId: string;
+  reason?: string;
 }
 
 interface EscalationPlanItem {
@@ -180,26 +210,32 @@ interface AttemptHistoryItem {
   contactId: string;
   displayName: string | null;
   trustScore: number;
-  result: "ANSWERED" | "NO_RESPONSE" | "FAILED";
+  result:
+    | "ANSWERED"
+    | "NO_RESPONSE"
+    | "FAILED";
   attemptedAt: Timestamp;
 }
 
 /**
- * Restricts a score to the range 0 to 100.
+ * Restricts a score to 0-100.
  *
  * @param {number} value Score value.
- * @return {number} Score limited to 0-100.
+ * @return {number} Restricted score.
  */
 function clampScore(value: number): number {
-  return Math.max(0, Math.min(100, value));
+  return Math.max(
+    0,
+    Math.min(100, value)
+  );
 }
 
 /**
- * Calculates the percentage of calls that were answered.
+ * Calculates answer-rate score.
  *
- * @param {number} answeredCalls Number of answered calls.
- * @param {number} callCount Total number of calls.
- * @return {number} Answer-rate score from 0 to 100.
+ * @param {number} answeredCalls Answered calls.
+ * @param {number} callCount Total calls.
+ * @return {number} Answer-rate score.
  */
 function calculateAnswerRateScore(
   answeredCalls: number,
@@ -215,10 +251,10 @@ function calculateAnswerRateScore(
 }
 
 /**
- * Calculates communication-frequency score.
+ * Calculates frequency score.
  *
- * @param {number} callCount Total number of calls.
- * @return {number} Frequency score from 0 to 100.
+ * @param {number} callCount Total calls.
+ * @return {number} Frequency score.
  */
 function calculateFrequencyScore(
   callCount: number
@@ -230,15 +266,16 @@ function calculateFrequencyScore(
   const frequencyThreshold = 50;
 
   return clampScore(
-    (callCount / frequencyThreshold) * 100
+    (callCount / frequencyThreshold) *
+    100
   );
 }
 
 /**
- * Calculates communication-duration score.
+ * Calculates duration score.
  *
- * @param {number} totalDurationSeconds Total communication duration.
- * @return {number} Duration score from 0 to 100.
+ * @param {number} totalDurationSeconds Duration.
+ * @return {number} Duration score.
  */
 function calculateDurationScore(
   totalDurationSeconds: number
@@ -250,15 +287,18 @@ function calculateDurationScore(
   const durationThresholdSeconds = 7200;
 
   return clampScore(
-    (totalDurationSeconds / durationThresholdSeconds) * 100
+    (
+      totalDurationSeconds /
+      durationThresholdSeconds
+    ) * 100
   );
 }
 
 /**
- * Calculates communication-consistency score.
+ * Calculates consistency score.
  *
- * @param {number} communicationDays Number of communication days.
- * @return {number} Consistency score from 0 to 100.
+ * @param {number} communicationDays Days.
+ * @return {number} Consistency score.
  */
 function calculateConsistencyScore(
   communicationDays: number
@@ -270,15 +310,18 @@ function calculateConsistencyScore(
   const consistencyThresholdDays = 30;
 
   return clampScore(
-    (communicationDays / consistencyThresholdDays) * 100
+    (
+      communicationDays /
+      consistencyThresholdDays
+    ) * 100
   );
 }
 
 /**
- * Calculates communication-recency score.
+ * Calculates recency score.
  *
- * @param {string|undefined} lastContactAt Last contact timestamp.
- * @return {number} Recency score from 0 to 100.
+ * @param {string|undefined} lastContactAt Last contact.
+ * @return {number} Recency score.
  */
 function calculateRecencyScore(
   lastContactAt?: string
@@ -302,8 +345,10 @@ function calculateRecencyScore(
   const daysSinceLastContact =
     Math.max(
       0,
-      (now - lastContactTime) /
-        millisecondsPerDay
+      (
+        now -
+        lastContactTime
+      ) / millisecondsPerDay
     );
 
   const recencyThresholdDays = 30;
@@ -313,8 +358,7 @@ function calculateRecencyScore(
     (
       daysSinceLastContact /
       recencyThresholdDays
-    ) *
-      100;
+    ) * 100;
 
   return Math.round(
     clampScore(score)
@@ -324,9 +368,9 @@ function calculateRecencyScore(
 /**
  * Calculates spam/business reliability.
  *
- * @param {boolean} isLikelyBusiness Whether contact is business.
- * @param {boolean} isLikelySpam Whether contact is spam.
- * @return {number} Reliability score from 0 to 100.
+ * @param {boolean} isLikelyBusiness Business flag.
+ * @param {boolean} isLikelySpam Spam flag.
+ * @return {number} Reliability score.
  */
 function calculateSpamBusinessScore(
   isLikelyBusiness: boolean,
@@ -344,15 +388,15 @@ function calculateSpamBusinessScore(
 }
 
 /**
- * Calculates final weighted trust score.
+ * Calculates weighted trust score.
  *
- * @param {number} answerRateScore Answer-rate score.
+ * @param {number} answerRateScore Answer score.
  * @param {number} frequencyScore Frequency score.
  * @param {number} durationScore Duration score.
  * @param {number} consistencyScore Consistency score.
  * @param {number} recencyScore Recency score.
  * @param {number} spamBusinessScore Reliability score.
- * @return {number} Final trust score.
+ * @return {number} Trust score.
  */
 function calculateTrustScore(
   answerRateScore: number,
@@ -380,7 +424,8 @@ export const startEmergency = onCall(
     if (!request.auth) {
       throw new HttpsError(
         "unauthenticated",
-        "You must be signed in to start an emergency."
+        "You must be signed in to " +
+        "start an emergency."
       );
     }
 
@@ -395,7 +440,8 @@ export const startEmergency = onCall(
     ) {
       throw new HttpsError(
         "invalid-argument",
-        "eventId, eventType, timestamp, and source are required."
+        "eventId, eventType, timestamp, " +
+        "and source are required."
       );
     }
 
@@ -413,7 +459,8 @@ export const startEmergency = onCall(
     if (existingEmergency.exists) {
       throw new HttpsError(
         "already-exists",
-        "An emergency with this eventId already exists."
+        "An emergency with this eventId " +
+        "already exists."
       );
     }
 
@@ -454,7 +501,8 @@ export const saveContactFeatures = onCall(
     if (!request.auth) {
       throw new HttpsError(
         "unauthenticated",
-        "You must be signed in to save contact features."
+        "You must be signed in to " +
+        "save contact features."
       );
     }
 
@@ -467,7 +515,8 @@ export const saveContactFeatures = onCall(
     ) {
       throw new HttpsError(
         "invalid-argument",
-        "contactId and phoneHash are required."
+        "contactId and phoneHash " +
+        "are required."
       );
     }
 
@@ -612,7 +661,8 @@ export const rankContacts = onCall(
     if (!request.auth) {
       throw new HttpsError(
         "unauthenticated",
-        "You must be signed in to rank contacts."
+        "You must be signed in to " +
+        "rank contacts."
       );
     }
 
@@ -705,7 +755,8 @@ export const prepareEmergencyEscalation =
       if (!request.auth) {
         throw new HttpsError(
           "unauthenticated",
-          "You must be signed in to prepare emergency escalation."
+          "You must be signed in to " +
+          "prepare emergency escalation."
         );
       }
 
@@ -744,7 +795,8 @@ export const prepareEmergencyEscalation =
 
       const currentStatus =
         emergencyData?.status as
-          EmergencyStatus | undefined;
+          EmergencyStatus |
+          undefined;
 
       if (!currentStatus) {
         throw new HttpsError(
@@ -753,11 +805,14 @@ export const prepareEmergencyEscalation =
         );
       }
 
-      if (currentStatus !== "PENDING") {
+      if (
+        currentStatus !==
+        "PENDING"
+      ) {
         throw new HttpsError(
           "failed-precondition",
-          "Escalation can only be prepared " +
-          "for a PENDING emergency."
+          "Escalation can only be " +
+          "prepared for a PENDING emergency."
         );
       }
 
@@ -809,8 +864,8 @@ export const prepareEmergencyEscalation =
       ) {
         throw new HttpsError(
           "failed-precondition",
-          "Emergency escalation " +
-          "was already initialized."
+          "Emergency escalation was " +
+          "already initialized."
         );
       }
 
@@ -1009,7 +1064,9 @@ export const advanceEmergencyEscalation =
                 emergencyRef
               );
 
-            if (!emergencySnapshot.exists) {
+            if (
+              !emergencySnapshot.exists
+            ) {
               throw new HttpsError(
                 "not-found",
                 "Emergency event was not found."
@@ -1072,7 +1129,8 @@ export const advanceEmergencyEscalation =
 
             if (
               !escalationPlan ||
-              escalationPlan.length === 0
+              escalationPlan.length ===
+                0
             ) {
               throw new HttpsError(
                 "failed-precondition",
@@ -1334,3 +1392,132 @@ export const advanceEmergencyEscalation =
       return result;
     }
   );
+
+export const cancelEmergency = onCall(
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "You must be signed in to " +
+        "cancel an emergency."
+      );
+    }
+
+    const data =
+      request.data as CancelEmergencyRequest;
+
+    if (!data.eventId) {
+      throw new HttpsError(
+        "invalid-argument",
+        "eventId is required."
+      );
+    }
+
+    const uid =
+      request.auth.uid;
+
+    const emergencyRef =
+      db
+        .collection("users")
+        .doc(uid)
+        .collection("emergencies")
+        .doc(data.eventId);
+
+    const result =
+      await db.runTransaction(
+        async (transaction) => {
+          const emergencySnapshot =
+            await transaction.get(
+              emergencyRef
+            );
+
+          if (!emergencySnapshot.exists) {
+            throw new HttpsError(
+              "not-found",
+              "Emergency event was not found."
+            );
+          }
+
+          const emergencyData =
+            emergencySnapshot.data();
+
+          const currentStatus =
+            emergencyData?.status as
+              EmergencyStatus |
+              undefined;
+
+          if (!currentStatus) {
+            throw new HttpsError(
+              "failed-precondition",
+              "Emergency status is missing."
+            );
+          }
+
+          if (
+            currentStatus ===
+              "CANCELLED"
+          ) {
+            throw new HttpsError(
+              "failed-precondition",
+              "Emergency is already cancelled."
+            );
+          }
+
+          if (
+            currentStatus ===
+              "CONTACT_REACHED" ||
+            currentStatus ===
+              "ESCALATION_EXHAUSTED"
+          ) {
+            throw new HttpsError(
+              "failed-precondition",
+              "Completed emergency cannot " +
+              "be cancelled."
+            );
+          }
+
+          if (
+            !canTransitionEmergencyStatus(
+              currentStatus,
+              "CANCELLED"
+            )
+          ) {
+            throw new HttpsError(
+              "failed-precondition",
+              "Emergency cannot be cancelled " +
+              "from its current status."
+            );
+          }
+
+          transaction.set(
+            emergencyRef,
+            {
+              status:
+                "CANCELLED",
+              cancellationReason:
+                data.reason ?? null,
+              cancelledAt:
+                FieldValue.serverTimestamp(),
+              updatedAt:
+                FieldValue.serverTimestamp(),
+            },
+            {merge: true}
+          );
+
+          return {
+            success: true,
+            emergencyId:
+              data.eventId,
+            previousStatus:
+              currentStatus,
+            status:
+              "CANCELLED",
+            reason:
+              data.reason ?? null,
+          };
+        }
+      );
+
+    return result;
+  }
+);
