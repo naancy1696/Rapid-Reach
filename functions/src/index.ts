@@ -295,6 +295,7 @@ function calculateRecencyScore(
   }
 
   const now = Date.now();
+
   const millisecondsPerDay =
     24 * 60 * 60 * 1000;
 
@@ -1000,322 +1001,336 @@ export const advanceEmergencyEscalation =
           .collection("emergencies")
           .doc(data.eventId);
 
-      const emergencySnapshot =
-        await emergencyRef.get();
+      const result =
+        await db.runTransaction(
+          async (transaction) => {
+            const emergencySnapshot =
+              await transaction.get(
+                emergencyRef
+              );
 
-      if (!emergencySnapshot.exists) {
-        throw new HttpsError(
-          "not-found",
-          "Emergency event was not found."
-        );
-      }
+            if (!emergencySnapshot.exists) {
+              throw new HttpsError(
+                "not-found",
+                "Emergency event was not found."
+              );
+            }
 
-      const emergencyData =
-        emergencySnapshot.data();
+            const emergencyData =
+              emergencySnapshot.data();
 
-      const currentStatus =
-        emergencyData?.status as
-          EmergencyStatus | undefined;
+            const currentStatus =
+              emergencyData?.status as
+                EmergencyStatus |
+                undefined;
 
-      if (!currentStatus) {
-        throw new HttpsError(
-          "failed-precondition",
-          "Emergency status is missing."
-        );
-      }
+            if (!currentStatus) {
+              throw new HttpsError(
+                "failed-precondition",
+                "Emergency status is missing."
+              );
+            }
 
-      if (
-        currentStatus ===
-          "CONTACT_REACHED" ||
-        currentStatus ===
-          "ESCALATION_EXHAUSTED" ||
-        currentStatus ===
-          "CANCELLED"
-      ) {
-        throw new HttpsError(
-          "failed-precondition",
-          "Emergency escalation is " +
-          "already complete."
-        );
-      }
+            if (
+              currentStatus ===
+                "CONTACT_REACHED" ||
+              currentStatus ===
+                "ESCALATION_EXHAUSTED" ||
+              currentStatus ===
+                "CANCELLED"
+            ) {
+              throw new HttpsError(
+                "failed-precondition",
+                "Emergency escalation is " +
+                "already complete."
+              );
+            }
 
-      if (
-        currentStatus !==
-          "READY_FOR_ESCALATION" &&
-        currentStatus !==
-          "ESCALATING"
-      ) {
-        const message =
-          "Emergency cannot be " +
-          "escalated from status " +
-          currentStatus +
-          ".";
+            if (
+              currentStatus !==
+                "READY_FOR_ESCALATION" &&
+              currentStatus !==
+                "ESCALATING"
+            ) {
+              const message =
+                "Emergency cannot be " +
+                "escalated from status " +
+                currentStatus +
+                ".";
 
-        throw new HttpsError(
-          "failed-precondition",
-          message
-        );
-      }
+              throw new HttpsError(
+                "failed-precondition",
+                message
+              );
+            }
 
-      const escalationPlan =
-        emergencyData
-          ?.escalationPlan as
-          EscalationPlanItem[] |
-          undefined;
+            const escalationPlan =
+              emergencyData
+                ?.escalationPlan as
+                EscalationPlanItem[] |
+                undefined;
 
-      if (
-        !escalationPlan ||
-        escalationPlan.length === 0
-      ) {
-        throw new HttpsError(
-          "failed-precondition",
-          "Emergency escalation plan " +
-          "is not available."
-        );
-      }
+            if (
+              !escalationPlan ||
+              escalationPlan.length === 0
+            ) {
+              throw new HttpsError(
+                "failed-precondition",
+                "Emergency escalation plan " +
+                "is not available."
+              );
+            }
 
-      const currentIndex =
-        typeof emergencyData
-          ?.currentEscalationIndex ===
-        "number" ?
-          emergencyData
-            .currentEscalationIndex :
-          0;
+            const currentIndex =
+              typeof emergencyData
+                ?.currentEscalationIndex ===
+              "number" ?
+                emergencyData
+                  .currentEscalationIndex :
+                0;
 
-      if (
-        currentIndex < 0 ||
-        currentIndex >=
-          escalationPlan.length
-      ) {
-        throw new HttpsError(
-          "failed-precondition",
-          "Current escalation index " +
-          "is invalid."
-        );
-      }
+            if (
+              currentIndex < 0 ||
+              currentIndex >=
+                escalationPlan.length
+            ) {
+              throw new HttpsError(
+                "failed-precondition",
+                "Current escalation index " +
+                "is invalid."
+              );
+            }
 
-      const updatedPlan =
-        escalationPlan.map(
-          (item) => {
+            const updatedPlan =
+              escalationPlan.map(
+                (item) => {
+                  return {
+                    ...item,
+                  };
+                }
+              );
+
+            const currentContact =
+              updatedPlan[currentIndex];
+
+            const existingAttemptHistory =
+              Array.isArray(
+                emergencyData
+                  ?.attemptHistory
+              ) ?
+                emergencyData
+                  .attemptHistory as
+                  AttemptHistoryItem[] :
+                [];
+
+            const attemptRecord:
+              AttemptHistoryItem = {
+                escalationOrder:
+                  currentContact
+                    .escalationOrder,
+                contactId:
+                  currentContact
+                    .contactId,
+                displayName:
+                  currentContact
+                    .displayName,
+                trustScore:
+                  currentContact
+                    .trustScore,
+                result:
+                  data.attemptResult,
+                attemptedAt:
+                  Timestamp.now(),
+              };
+
+            const updatedAttemptHistory = [
+              ...existingAttemptHistory,
+              attemptRecord,
+            ];
+
+            if (
+              data.attemptResult ===
+              "ANSWERED"
+            ) {
+              if (
+                !canTransitionEmergencyStatus(
+                  currentStatus,
+                  "CONTACT_REACHED"
+                )
+              ) {
+                throw new HttpsError(
+                  "failed-precondition",
+                  "Invalid transition to " +
+                  "CONTACT_REACHED."
+                );
+              }
+
+              currentContact.status =
+                "ANSWERED";
+
+              transaction.set(
+                emergencyRef,
+                {
+                  escalationPlan:
+                    updatedPlan,
+                  attemptHistory:
+                    updatedAttemptHistory,
+                  currentEscalationIndex:
+                    currentIndex,
+                  status:
+                    "CONTACT_REACHED",
+                  contactedContactId:
+                    currentContact
+                      .contactId,
+                  contactedAt:
+                    FieldValue
+                      .serverTimestamp(),
+                  updatedAt:
+                    FieldValue
+                      .serverTimestamp(),
+                },
+                {merge: true}
+              );
+
+              return {
+                success: true,
+                emergencyId:
+                  data.eventId,
+                status:
+                  "CONTACT_REACHED",
+                currentContact:
+                  currentContact,
+                escalationComplete:
+                  true,
+                attemptHistoryCount:
+                  updatedAttemptHistory
+                    .length,
+              };
+            }
+
+            if (
+              data.attemptResult ===
+              "NO_RESPONSE"
+            ) {
+              currentContact.status =
+                "NO_RESPONSE";
+            }
+
+            if (
+              data.attemptResult ===
+              "FAILED"
+            ) {
+              currentContact.status =
+                "FAILED";
+            }
+
+            const nextIndex =
+              currentIndex + 1;
+
+            if (
+              nextIndex >=
+              updatedPlan.length
+            ) {
+              if (
+                !canTransitionEmergencyStatus(
+                  currentStatus,
+                  "ESCALATION_EXHAUSTED"
+                )
+              ) {
+                throw new HttpsError(
+                  "failed-precondition",
+                  "Invalid transition to " +
+                  "ESCALATION_EXHAUSTED."
+                );
+              }
+
+              transaction.set(
+                emergencyRef,
+                {
+                  escalationPlan:
+                    updatedPlan,
+                  attemptHistory:
+                    updatedAttemptHistory,
+                  currentEscalationIndex:
+                    currentIndex,
+                  status:
+                    "ESCALATION_EXHAUSTED",
+                  updatedAt:
+                    FieldValue
+                      .serverTimestamp(),
+                },
+                {merge: true}
+              );
+
+              return {
+                success: true,
+                emergencyId:
+                  data.eventId,
+                status:
+                  "ESCALATION_EXHAUSTED",
+                escalationComplete:
+                  true,
+                nextContact:
+                  null,
+                attemptHistoryCount:
+                  updatedAttemptHistory
+                    .length,
+              };
+            }
+
+            if (
+              !canTransitionEmergencyStatus(
+                currentStatus,
+                "ESCALATING"
+              )
+            ) {
+              throw new HttpsError(
+                "failed-precondition",
+                "Invalid transition " +
+                "to ESCALATING."
+              );
+            }
+
+            updatedPlan[nextIndex].status =
+              "NEXT";
+
+            transaction.set(
+              emergencyRef,
+              {
+                escalationPlan:
+                  updatedPlan,
+                attemptHistory:
+                  updatedAttemptHistory,
+                currentEscalationIndex:
+                  nextIndex,
+                status:
+                  "ESCALATING",
+                updatedAt:
+                  FieldValue
+                    .serverTimestamp(),
+              },
+              {merge: true}
+            );
+
             return {
-              ...item,
+              success: true,
+              emergencyId:
+                data.eventId,
+              status:
+                "ESCALATING",
+              escalationComplete:
+                false,
+              currentEscalationIndex:
+                nextIndex,
+              nextContact:
+                updatedPlan[nextIndex],
+              attemptHistoryCount:
+                updatedAttemptHistory
+                  .length,
             };
           }
         );
 
-      const currentContact =
-        updatedPlan[currentIndex];
-
-      const existingAttemptHistory =
-        Array.isArray(
-          emergencyData
-            ?.attemptHistory
-        ) ?
-          emergencyData
-            .attemptHistory as
-            AttemptHistoryItem[] :
-          [];
-
-      const attemptRecord:
-        AttemptHistoryItem = {
-          escalationOrder:
-            currentContact
-              .escalationOrder,
-          contactId:
-            currentContact
-              .contactId,
-          displayName:
-            currentContact
-              .displayName,
-          trustScore:
-            currentContact
-              .trustScore,
-          result:
-            data.attemptResult,
-          attemptedAt:
-            Timestamp.now(),
-        };
-
-      const updatedAttemptHistory = [
-        ...existingAttemptHistory,
-        attemptRecord,
-      ];
-
-      if (
-        data.attemptResult ===
-        "ANSWERED"
-      ) {
-        if (
-          !canTransitionEmergencyStatus(
-            currentStatus,
-            "CONTACT_REACHED"
-          )
-        ) {
-          throw new HttpsError(
-            "failed-precondition",
-            "Invalid transition to " +
-            "CONTACT_REACHED."
-          );
-        }
-
-        currentContact.status =
-          "ANSWERED";
-
-        await emergencyRef.set(
-          {
-            escalationPlan:
-              updatedPlan,
-            attemptHistory:
-              updatedAttemptHistory,
-            currentEscalationIndex:
-              currentIndex,
-            status:
-              "CONTACT_REACHED",
-            contactedContactId:
-              currentContact
-                .contactId,
-            contactedAt:
-              FieldValue
-                .serverTimestamp(),
-            updatedAt:
-              FieldValue
-                .serverTimestamp(),
-          },
-          {merge: true}
-        );
-
-        return {
-          success: true,
-          emergencyId:
-            data.eventId,
-          status:
-            "CONTACT_REACHED",
-          currentContact:
-            currentContact,
-          escalationComplete:
-            true,
-          attemptHistoryCount:
-            updatedAttemptHistory
-              .length,
-        };
-      }
-
-      if (
-        data.attemptResult ===
-        "NO_RESPONSE"
-      ) {
-        currentContact.status =
-          "NO_RESPONSE";
-      }
-
-      if (
-        data.attemptResult ===
-        "FAILED"
-      ) {
-        currentContact.status =
-          "FAILED";
-      }
-
-      const nextIndex =
-        currentIndex + 1;
-
-      if (
-        nextIndex >=
-        updatedPlan.length
-      ) {
-        if (
-          !canTransitionEmergencyStatus(
-            currentStatus,
-            "ESCALATION_EXHAUSTED"
-          )
-        ) {
-          throw new HttpsError(
-            "failed-precondition",
-            "Invalid transition to " +
-            "ESCALATION_EXHAUSTED."
-          );
-        }
-
-        await emergencyRef.set(
-          {
-            escalationPlan:
-              updatedPlan,
-            attemptHistory:
-              updatedAttemptHistory,
-            currentEscalationIndex:
-              currentIndex,
-            status:
-              "ESCALATION_EXHAUSTED",
-            updatedAt:
-              FieldValue
-                .serverTimestamp(),
-          },
-          {merge: true}
-        );
-
-        return {
-          success: true,
-          emergencyId:
-            data.eventId,
-          status:
-            "ESCALATION_EXHAUSTED",
-          escalationComplete:
-            true,
-          nextContact:
-            null,
-          attemptHistoryCount:
-            updatedAttemptHistory
-              .length,
-        };
-      }
-
-      if (
-        !canTransitionEmergencyStatus(
-          currentStatus,
-          "ESCALATING"
-        )
-      ) {
-        throw new HttpsError(
-          "failed-precondition",
-          "Invalid transition " +
-          "to ESCALATING."
-        );
-      }
-
-      updatedPlan[nextIndex].status =
-        "NEXT";
-
-      await emergencyRef.set(
-        {
-          escalationPlan:
-            updatedPlan,
-          attemptHistory:
-            updatedAttemptHistory,
-          currentEscalationIndex:
-            nextIndex,
-          status:
-            "ESCALATING",
-          updatedAt:
-            FieldValue
-              .serverTimestamp(),
-        },
-        {merge: true}
-      );
-
-      return {
-        success: true,
-        emergencyId:
-          data.eventId,
-        status:
-          "ESCALATING",
-        escalationComplete:
-          false,
-        currentEscalationIndex:
-          nextIndex,
-        nextContact:
-          updatedPlan[nextIndex],
-        attemptHistoryCount:
-          updatedAttemptHistory.length,
-      };
+      return result;
     }
   );
