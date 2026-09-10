@@ -122,7 +122,6 @@ interface EmergencyEventData {
   eventType: string;
   timestamp: string;
   source: string;
-  status?: EmergencyStatus;
   location?: {
     latitude: number;
     longitude: number;
@@ -241,7 +240,9 @@ function calculateFrequencyScore(callCount: number): number {
  * @param {number} totalDurationSeconds Total communication duration.
  * @return {number} Duration score from 0 to 100.
  */
-function calculateDurationScore(totalDurationSeconds: number): number {
+function calculateDurationScore(
+  totalDurationSeconds: number
+): number {
   if (totalDurationSeconds <= 0) {
     return 0;
   }
@@ -262,7 +263,9 @@ function calculateDurationScore(totalDurationSeconds: number): number {
  * @param {number} communicationDays Number of communication days.
  * @return {number} Consistency score from 0 to 100.
  */
-function calculateConsistencyScore(communicationDays: number): number {
+function calculateConsistencyScore(
+  communicationDays: number
+): number {
   if (communicationDays <= 0) {
     return 0;
   }
@@ -400,6 +403,8 @@ export const startEmergency = onCall(async (request) => {
 
   const uid = request.auth.uid;
 
+  const initialStatus: EmergencyStatus = "PENDING";
+
   await db
     .collection("users")
     .doc(uid)
@@ -413,7 +418,7 @@ export const startEmergency = onCall(async (request) => {
       source: data.source,
       location: data.location ?? null,
       sensorData: data.sensorData ?? null,
-      status: "PENDING",
+      status: initialStatus,
       attemptHistory: [],
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
@@ -422,7 +427,7 @@ export const startEmergency = onCall(async (request) => {
   return {
     success: true,
     emergencyId: data.eventId,
-    status: "PENDING",
+    status: initialStatus,
   };
 });
 
@@ -447,12 +452,16 @@ export const saveContactFeatures = onCall(async (request) => {
 
   const callCount = data.callCount ?? 0;
   const answeredCalls = data.answeredCalls ?? 0;
-  const totalDurationSeconds = data.totalDurationSeconds ?? 0;
-  const communicationDays = data.communicationDays ?? 0;
+  const totalDurationSeconds =
+    data.totalDurationSeconds ?? 0;
+  const communicationDays =
+    data.communicationDays ?? 0;
   const lastContactAt = data.lastContactAt;
 
-  const isLikelyBusiness = data.isLikelyBusiness ?? false;
-  const isLikelySpam = data.isLikelySpam ?? false;
+  const isLikelyBusiness =
+    data.isLikelyBusiness ?? false;
+  const isLikelySpam =
+    data.isLikelySpam ?? false;
 
   const answerRateScore = calculateAnswerRateScore(
     answeredCalls,
@@ -475,10 +484,11 @@ export const saveContactFeatures = onCall(async (request) => {
     lastContactAt
   );
 
-  const spamBusinessScore = calculateSpamBusinessScore(
-    isLikelyBusiness,
-    isLikelySpam
-  );
+  const spamBusinessScore =
+    calculateSpamBusinessScore(
+      isLikelyBusiness,
+      isLikelySpam
+    );
 
   const trustScore = calculateTrustScore(
     answerRateScore,
@@ -502,19 +512,32 @@ export const saveContactFeatures = onCall(async (request) => {
         callCount: callCount,
         answeredCalls: answeredCalls,
         missedCalls: data.missedCalls ?? 0,
-        totalDurationSeconds: totalDurationSeconds,
-        lastContactAt: lastContactAt ?? null,
-        communicationDays: communicationDays,
-        isLikelyBusiness: isLikelyBusiness,
-        isLikelySpam: isLikelySpam,
-        answerRateScore: answerRateScore,
-        frequencyScore: frequencyScore,
-        durationScore: durationScore,
-        consistencyScore: consistencyScore,
-        recencyScore: recencyScore,
-        spamBusinessScore: spamBusinessScore,
-        trustScore: trustScore,
-        updatedAt: FieldValue.serverTimestamp(),
+        totalDurationSeconds:
+          totalDurationSeconds,
+        lastContactAt:
+          lastContactAt ?? null,
+        communicationDays:
+          communicationDays,
+        isLikelyBusiness:
+          isLikelyBusiness,
+        isLikelySpam:
+          isLikelySpam,
+        answerRateScore:
+          answerRateScore,
+        frequencyScore:
+          frequencyScore,
+        durationScore:
+          durationScore,
+        consistencyScore:
+          consistencyScore,
+        recencyScore:
+          recencyScore,
+        spamBusinessScore:
+          spamBusinessScore,
+        trustScore:
+          trustScore,
+        updatedAt:
+          FieldValue.serverTimestamp(),
       },
       {merge: true}
     );
@@ -560,15 +583,20 @@ export const rankContacts = onCall(async (request) => {
     const data = doc.data();
 
     return {
-      contactId: data.contactId ?? doc.id,
-      displayName: data.displayName ?? null,
-      phoneHash: data.phoneHash ?? null,
+      contactId:
+        data.contactId ?? doc.id,
+      displayName:
+        data.displayName ?? null,
+      phoneHash:
+        data.phoneHash ?? null,
       trustScore:
         typeof data.trustScore === "number" ?
           data.trustScore :
           0,
-      isLikelyBusiness: data.isLikelyBusiness ?? false,
-      isLikelySpam: data.isLikelySpam ?? false,
+      isLikelyBusiness:
+        data.isLikelyBusiness ?? false,
+      isLikelySpam:
+        data.isLikelySpam ?? false,
     };
   });
 
@@ -576,19 +604,20 @@ export const rankContacts = onCall(async (request) => {
     return b.trustScore - a.trustScore;
   });
 
-  const rankedContacts: RankedContact[] = contacts.map(
-    (contact, index) => {
+  const rankedContacts: RankedContact[] =
+    contacts.map((contact, index) => {
       return {
         rank: index + 1,
         contactId: contact.contactId,
         displayName: contact.displayName,
         trustScore: contact.trustScore,
         phoneHash: contact.phoneHash,
-        isLikelyBusiness: contact.isLikelyBusiness,
-        isLikelySpam: contact.isLikelySpam,
+        isLikelyBusiness:
+          contact.isLikelyBusiness,
+        isLikelySpam:
+          contact.isLikelySpam,
       };
-    }
-  );
+    });
 
   return {
     success: true,
@@ -623,7 +652,8 @@ export const prepareEmergencyEscalation = onCall(
       .collection("emergencies")
       .doc(data.eventId);
 
-    const emergencySnapshot = await emergencyRef.get();
+    const emergencySnapshot =
+      await emergencyRef.get();
 
     if (!emergencySnapshot.exists) {
       throw new HttpsError(
@@ -632,10 +662,12 @@ export const prepareEmergencyEscalation = onCall(
       );
     }
 
-    const emergencyData = emergencySnapshot.data();
+    const emergencyData =
+      emergencySnapshot.data();
 
     const currentStatus =
-      emergencyData?.status as EmergencyStatus | undefined;
+      emergencyData?.status as
+        EmergencyStatus | undefined;
 
     if (!currentStatus) {
       throw new HttpsError(
@@ -652,7 +684,8 @@ export const prepareEmergencyEscalation = onCall(
     ) {
       const message =
         "Invalid emergency state transition: " +
-        `${currentStatus} -> READY_FOR_ESCALATION`;
+        `${currentStatus} -> ` +
+        "READY_FOR_ESCALATION";
 
       throw new HttpsError(
         "failed-precondition",
@@ -669,36 +702,45 @@ export const prepareEmergencyEscalation = onCall(
     if (contactsSnapshot.empty) {
       throw new HttpsError(
         "failed-precondition",
-        "No contacts are available for emergency escalation."
+        "No contacts are available " +
+        "for emergency escalation."
       );
     }
 
-    const eligibleContacts = contactsSnapshot.docs
-      .map((doc) => {
-        const contact = doc.data();
+    const eligibleContacts =
+      contactsSnapshot.docs
+        .map((doc) => {
+          const contact = doc.data();
 
-        return {
-          contactId: contact.contactId ?? doc.id,
-          displayName: contact.displayName ?? null,
-          phoneHash: contact.phoneHash ?? null,
-          trustScore:
-            typeof contact.trustScore === "number" ?
-              contact.trustScore :
-              0,
-          isLikelyBusiness:
-            contact.isLikelyBusiness ?? false,
-          isLikelySpam:
-            contact.isLikelySpam ?? false,
-        };
-      })
-      .filter((contact) => {
-        return !contact.isLikelySpam;
-      });
+          return {
+            contactId:
+              contact.contactId ?? doc.id,
+            displayName:
+              contact.displayName ?? null,
+            phoneHash:
+              contact.phoneHash ?? null,
+            trustScore:
+              typeof contact.trustScore ===
+              "number" ?
+                contact.trustScore :
+                0,
+            isLikelyBusiness:
+              contact.isLikelyBusiness ??
+              false,
+            isLikelySpam:
+              contact.isLikelySpam ??
+              false,
+          };
+        })
+        .filter((contact) => {
+          return !contact.isLikelySpam;
+        });
 
     if (eligibleContacts.length === 0) {
       throw new HttpsError(
         "failed-precondition",
-        "No eligible contacts are available for escalation."
+        "No eligible contacts are " +
+        "available for escalation."
       );
     }
 
@@ -708,26 +750,33 @@ export const prepareEmergencyEscalation = onCall(
 
     const maximumEscalationContacts = 3;
 
-    const escalationPlan = eligibleContacts
-      .slice(0, maximumEscalationContacts)
-      .map((contact, index) => {
-        return {
-          escalationOrder: index + 1,
-          contactId: contact.contactId,
-          displayName: contact.displayName,
-          phoneHash: contact.phoneHash,
-          trustScore: contact.trustScore,
-          isLikelyBusiness: contact.isLikelyBusiness,
-          status: "WAITING",
-        };
-      });
+    const escalationPlan =
+      eligibleContacts
+        .slice(0, maximumEscalationContacts)
+        .map((contact, index) => {
+          return {
+            escalationOrder: index + 1,
+            contactId: contact.contactId,
+            displayName:
+              contact.displayName,
+            phoneHash:
+              contact.phoneHash,
+            trustScore:
+              contact.trustScore,
+            isLikelyBusiness:
+              contact.isLikelyBusiness,
+            status: "WAITING",
+          };
+        });
 
     await emergencyRef.set(
       {
-        escalationPlan: escalationPlan,
+        escalationPlan:
+          escalationPlan,
         currentEscalationIndex: 0,
         attemptHistory: [],
-        status: "READY_FOR_ESCALATION",
+        status:
+          "READY_FOR_ESCALATION",
         escalationPreparedAt:
           FieldValue.serverTimestamp(),
         updatedAt:
@@ -742,7 +791,8 @@ export const prepareEmergencyEscalation = onCall(
       status: "READY_FOR_ESCALATION",
       totalEscalationContacts:
         escalationPlan.length,
-      escalationPlan: escalationPlan,
+      escalationPlan:
+        escalationPlan,
     };
   }
 );
@@ -752,16 +802,22 @@ export const advanceEmergencyEscalation = onCall(
     if (!request.auth) {
       throw new HttpsError(
         "unauthenticated",
-        "You must be signed in to advance emergency escalation."
+        "You must be signed in to " +
+        "advance emergency escalation."
       );
     }
 
-    const data = request.data as EscalationProgressRequest;
+    const data =
+      request.data as EscalationProgressRequest;
 
-    if (!data.eventId || !data.attemptResult) {
+    if (
+      !data.eventId ||
+      !data.attemptResult
+    ) {
       throw new HttpsError(
         "invalid-argument",
-        "eventId and attemptResult are required."
+        "eventId and attemptResult " +
+        "are required."
       );
     }
 
@@ -771,7 +827,11 @@ export const advanceEmergencyEscalation = onCall(
       "FAILED",
     ];
 
-    if (!allowedResults.includes(data.attemptResult)) {
+    if (
+      !allowedResults.includes(
+        data.attemptResult
+      )
+    ) {
       throw new HttpsError(
         "invalid-argument",
         "Invalid attemptResult."
@@ -786,7 +846,8 @@ export const advanceEmergencyEscalation = onCall(
       .collection("emergencies")
       .doc(data.eventId);
 
-    const emergencySnapshot = await emergencyRef.get();
+    const emergencySnapshot =
+      await emergencyRef.get();
 
     if (!emergencySnapshot.exists) {
       throw new HttpsError(
@@ -795,10 +856,12 @@ export const advanceEmergencyEscalation = onCall(
       );
     }
 
-    const emergencyData = emergencySnapshot.data();
+    const emergencyData =
+      emergencySnapshot.data();
 
     const currentStatus =
-      emergencyData?.status as EmergencyStatus | undefined;
+      emergencyData?.status as
+        EmergencyStatus | undefined;
 
     if (!currentStatus) {
       throw new HttpsError(
@@ -808,22 +871,29 @@ export const advanceEmergencyEscalation = onCall(
     }
 
     if (
-      currentStatus === "CONTACT_REACHED" ||
-      currentStatus === "ESCALATION_EXHAUSTED" ||
-      currentStatus === "CANCELLED"
+      currentStatus ===
+        "CONTACT_REACHED" ||
+      currentStatus ===
+        "ESCALATION_EXHAUSTED" ||
+      currentStatus ===
+        "CANCELLED"
     ) {
       throw new HttpsError(
         "failed-precondition",
-        "Emergency escalation is already complete."
+        "Emergency escalation is " +
+        "already complete."
       );
     }
 
     if (
-      currentStatus !== "READY_FOR_ESCALATION" &&
-      currentStatus !== "ESCALATING"
+      currentStatus !==
+        "READY_FOR_ESCALATION" &&
+      currentStatus !==
+        "ESCALATING"
     ) {
       const message =
-        "Emergency cannot be escalated from status " +
+        "Emergency cannot be escalated " +
+        "from status " +
         currentStatus +
         ".";
 
@@ -837,54 +907,77 @@ export const advanceEmergencyEscalation = onCall(
       emergencyData?.escalationPlan as
         EscalationPlanItem[] | undefined;
 
-    if (!escalationPlan || escalationPlan.length === 0) {
+    if (
+      !escalationPlan ||
+      escalationPlan.length === 0
+    ) {
       throw new HttpsError(
         "failed-precondition",
-        "Emergency escalation plan is not available."
+        "Emergency escalation plan " +
+        "is not available."
       );
     }
 
     const currentIndex =
-      typeof emergencyData?.currentEscalationIndex === "number" ?
+      typeof emergencyData
+        ?.currentEscalationIndex ===
+        "number" ?
         emergencyData.currentEscalationIndex :
         0;
 
     if (
       currentIndex < 0 ||
-      currentIndex >= escalationPlan.length
+      currentIndex >=
+        escalationPlan.length
     ) {
       throw new HttpsError(
         "failed-precondition",
-        "Current escalation index is invalid."
+        "Current escalation index " +
+        "is invalid."
       );
     }
 
-    const updatedPlan = escalationPlan.map((item) => {
-      return {...item};
-    });
+    const updatedPlan =
+      escalationPlan.map((item) => {
+        return {...item};
+      });
 
-    const currentContact = updatedPlan[currentIndex];
+    const currentContact =
+      updatedPlan[currentIndex];
 
     const existingAttemptHistory =
-      Array.isArray(emergencyData?.attemptHistory) ?
-        emergencyData.attemptHistory as AttemptHistoryItem[] :
+      Array.isArray(
+        emergencyData?.attemptHistory
+      ) ?
+        emergencyData.attemptHistory as
+          AttemptHistoryItem[] :
         [];
 
-    const attemptRecord: AttemptHistoryItem = {
-      escalationOrder: currentContact.escalationOrder,
-      contactId: currentContact.contactId,
-      displayName: currentContact.displayName,
-      trustScore: currentContact.trustScore,
-      result: data.attemptResult,
-      attemptedAt: Timestamp.now(),
-    };
+    const attemptRecord:
+      AttemptHistoryItem = {
+        escalationOrder:
+          currentContact.escalationOrder,
+        contactId:
+          currentContact.contactId,
+        displayName:
+          currentContact.displayName,
+        trustScore:
+          currentContact.trustScore,
+        result:
+          data.attemptResult,
+        attemptedAt:
+          Timestamp.now(),
+      };
 
     const updatedAttemptHistory = [
       ...existingAttemptHistory,
       attemptRecord,
     ];
 
-    if (data.attemptResult === "ANSWERED") {
+    if (
+      data.attemptResult ===
+      "ANSWERED"
+    ) {
       if (
         !canTransitionEmergencyStatus(
           currentStatus,
@@ -892,8 +985,10 @@ export const advanceEmergencyEscalation = onCall(
         )
       ) {
         const message =
-          "Invalid emergency state transition: " +
-          `${currentStatus} -> CONTACT_REACHED`;
+          "Invalid emergency state " +
+          "transition: " +
+          `${currentStatus} -> ` +
+          "CONTACT_REACHED";
 
         throw new HttpsError(
           "failed-precondition",
@@ -901,14 +996,19 @@ export const advanceEmergencyEscalation = onCall(
         );
       }
 
-      currentContact.status = "ANSWERED";
+      currentContact.status =
+        "ANSWERED";
 
       await emergencyRef.set(
         {
-          escalationPlan: updatedPlan,
-          attemptHistory: updatedAttemptHistory,
-          currentEscalationIndex: currentIndex,
-          status: "CONTACT_REACHED",
+          escalationPlan:
+            updatedPlan,
+          attemptHistory:
+            updatedAttemptHistory,
+          currentEscalationIndex:
+            currentIndex,
+          status:
+            "CONTACT_REACHED",
           contactedContactId:
             currentContact.contactId,
           contactedAt:
@@ -921,26 +1021,42 @@ export const advanceEmergencyEscalation = onCall(
 
       return {
         success: true,
-        emergencyId: data.eventId,
-        status: "CONTACT_REACHED",
-        currentContact: currentContact,
-        escalationComplete: true,
+        emergencyId:
+          data.eventId,
+        status:
+          "CONTACT_REACHED",
+        currentContact:
+          currentContact,
+        escalationComplete:
+          true,
         attemptHistoryCount:
           updatedAttemptHistory.length,
       };
     }
 
-    if (data.attemptResult === "NO_RESPONSE") {
-      currentContact.status = "NO_RESPONSE";
+    if (
+      data.attemptResult ===
+      "NO_RESPONSE"
+    ) {
+      currentContact.status =
+        "NO_RESPONSE";
     }
 
-    if (data.attemptResult === "FAILED") {
-      currentContact.status = "FAILED";
+    if (
+      data.attemptResult ===
+      "FAILED"
+    ) {
+      currentContact.status =
+        "FAILED";
     }
 
-    const nextIndex = currentIndex + 1;
+    const nextIndex =
+      currentIndex + 1;
 
-    if (nextIndex >= updatedPlan.length) {
+    if (
+      nextIndex >=
+      updatedPlan.length
+    ) {
       if (
         !canTransitionEmergencyStatus(
           currentStatus,
@@ -948,8 +1064,10 @@ export const advanceEmergencyEscalation = onCall(
         )
       ) {
         const message =
-          "Invalid emergency state transition: " +
-          `${currentStatus} -> ESCALATION_EXHAUSTED`;
+          "Invalid emergency state " +
+          "transition: " +
+          `${currentStatus} -> ` +
+          "ESCALATION_EXHAUSTED";
 
         throw new HttpsError(
           "failed-precondition",
@@ -959,10 +1077,14 @@ export const advanceEmergencyEscalation = onCall(
 
       await emergencyRef.set(
         {
-          escalationPlan: updatedPlan,
-          attemptHistory: updatedAttemptHistory,
-          currentEscalationIndex: currentIndex,
-          status: "ESCALATION_EXHAUSTED",
+          escalationPlan:
+            updatedPlan,
+          attemptHistory:
+            updatedAttemptHistory,
+          currentEscalationIndex:
+            currentIndex,
+          status:
+            "ESCALATION_EXHAUSTED",
           updatedAt:
             FieldValue.serverTimestamp(),
         },
@@ -971,10 +1093,14 @@ export const advanceEmergencyEscalation = onCall(
 
       return {
         success: true,
-        emergencyId: data.eventId,
-        status: "ESCALATION_EXHAUSTED",
-        escalationComplete: true,
-        nextContact: null,
+        emergencyId:
+          data.eventId,
+        status:
+          "ESCALATION_EXHAUSTED",
+        escalationComplete:
+          true,
+        nextContact:
+          null,
         attemptHistoryCount:
           updatedAttemptHistory.length,
       };
@@ -987,8 +1113,10 @@ export const advanceEmergencyEscalation = onCall(
       )
     ) {
       const message =
-        "Invalid emergency state transition: " +
-        `${currentStatus} -> ESCALATING`;
+        "Invalid emergency state " +
+        "transition: " +
+        `${currentStatus} -> ` +
+        "ESCALATING";
 
       throw new HttpsError(
         "failed-precondition",
@@ -996,14 +1124,19 @@ export const advanceEmergencyEscalation = onCall(
       );
     }
 
-    updatedPlan[nextIndex].status = "NEXT";
+    updatedPlan[nextIndex].status =
+      "NEXT";
 
     await emergencyRef.set(
       {
-        escalationPlan: updatedPlan,
-        attemptHistory: updatedAttemptHistory,
-        currentEscalationIndex: nextIndex,
-        status: "ESCALATING",
+        escalationPlan:
+          updatedPlan,
+        attemptHistory:
+          updatedAttemptHistory,
+        currentEscalationIndex:
+          nextIndex,
+        status:
+          "ESCALATING",
         updatedAt:
           FieldValue.serverTimestamp(),
       },
@@ -1012,11 +1145,16 @@ export const advanceEmergencyEscalation = onCall(
 
     return {
       success: true,
-      emergencyId: data.eventId,
-      status: "ESCALATING",
-      escalationComplete: false,
-      currentEscalationIndex: nextIndex,
-      nextContact: updatedPlan[nextIndex],
+      emergencyId:
+        data.eventId,
+      status:
+        "ESCALATING",
+      escalationComplete:
+        false,
+      currentEscalationIndex:
+        nextIndex,
+      nextContact:
+        updatedPlan[nextIndex],
       attemptHistoryCount:
         updatedAttemptHistory.length,
     };
