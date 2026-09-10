@@ -17,6 +17,14 @@ setGlobalOptions({
   maxInstances: 10,
 });
 
+type EmergencyStatus =
+  | "PENDING"
+  | "READY_FOR_ESCALATION"
+  | "ESCALATING"
+  | "CONTACT_REACHED"
+  | "ESCALATION_EXHAUSTED"
+  | "CANCELLED";
+
 export const healthCheck = onRequest((request, response) => {
   logger.info("Rapid Reach backend health check");
 
@@ -72,6 +80,7 @@ interface EmergencyEventData {
   eventType: string;
   timestamp: string;
   source: string;
+  status?: EmergencyStatus;
   location?: {
     latitude: number;
     longitude: number;
