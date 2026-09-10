@@ -25,6 +25,48 @@ type EmergencyStatus =
   | "ESCALATION_EXHAUSTED"
   | "CANCELLED";
 
+const emergencyStatusTransitions: Record<
+  EmergencyStatus,
+  EmergencyStatus[]
+> = {
+  PENDING: [
+    "READY_FOR_ESCALATION",
+    "CANCELLED",
+  ],
+
+  READY_FOR_ESCALATION: [
+    "ESCALATING",
+    "CONTACT_REACHED",
+    "ESCALATION_EXHAUSTED",
+    "CANCELLED",
+  ],
+
+  ESCALATING: [
+    "ESCALATING",
+    "CONTACT_REACHED",
+    "ESCALATION_EXHAUSTED",
+    "CANCELLED",
+  ],
+
+  CONTACT_REACHED: [],
+  ESCALATION_EXHAUSTED: [],
+  CANCELLED: [],
+};
+
+/**
+ * Checks whether an emergency status transition is allowed.
+ *
+ * @param {EmergencyStatus} currentStatus Current emergency status.
+ * @param {EmergencyStatus} nextStatus Requested emergency status.
+ * @return {boolean} True when transition is allowed.
+ */
+function canTransitionEmergencyStatus(
+  currentStatus: EmergencyStatus,
+  nextStatus: EmergencyStatus
+): boolean {
+  return emergencyStatusTransitions[currentStatus].includes(nextStatus);
+}
+
 export const healthCheck = onRequest((request, response) => {
   logger.info("Rapid Reach backend health check");
 
@@ -590,6 +632,34 @@ export const prepareEmergencyEscalation = onCall(
       );
     }
 
+    const emergencyData = emergencySnapshot.data();
+
+    const currentStatus =
+      emergencyData?.status as EmergencyStatus | undefined;
+
+    if (!currentStatus) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Emergency status is missing."
+      );
+    }
+
+    if (
+      !canTransitionEmergencyStatus(
+        currentStatus,
+        "READY_FOR_ESCALATION"
+      )
+    ) {
+      const message =
+        "Invalid emergency state transition: " +
+        `${currentStatus} -> READY_FOR_ESCALATION`;
+
+      throw new HttpsError(
+        "failed-precondition",
+        message
+      );
+    }
+
     const contactsSnapshot = await db
       .collection("users")
       .doc(uid)
@@ -727,13 +797,39 @@ export const advanceEmergencyEscalation = onCall(
 
     const emergencyData = emergencySnapshot.data();
 
+    const currentStatus =
+      emergencyData?.status as EmergencyStatus | undefined;
+
+    if (!currentStatus) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Emergency status is missing."
+      );
+    }
+
     if (
-      emergencyData?.status === "CONTACT_REACHED" ||
-      emergencyData?.status === "ESCALATION_EXHAUSTED"
+      currentStatus === "CONTACT_REACHED" ||
+      currentStatus === "ESCALATION_EXHAUSTED" ||
+      currentStatus === "CANCELLED"
     ) {
       throw new HttpsError(
         "failed-precondition",
         "Emergency escalation is already complete."
+      );
+    }
+
+    if (
+      currentStatus !== "READY_FOR_ESCALATION" &&
+      currentStatus !== "ESCALATING"
+    ) {
+      const message =
+        "Emergency cannot be escalated from status " +
+        currentStatus +
+        ".";
+
+      throw new HttpsError(
+        "failed-precondition",
+        message
       );
     }
 
@@ -789,6 +885,22 @@ export const advanceEmergencyEscalation = onCall(
     ];
 
     if (data.attemptResult === "ANSWERED") {
+      if (
+        !canTransitionEmergencyStatus(
+          currentStatus,
+          "CONTACT_REACHED"
+        )
+      ) {
+        const message =
+          "Invalid emergency state transition: " +
+          `${currentStatus} -> CONTACT_REACHED`;
+
+        throw new HttpsError(
+          "failed-precondition",
+          message
+        );
+      }
+
       currentContact.status = "ANSWERED";
 
       await emergencyRef.set(
@@ -829,6 +941,22 @@ export const advanceEmergencyEscalation = onCall(
     const nextIndex = currentIndex + 1;
 
     if (nextIndex >= updatedPlan.length) {
+      if (
+        !canTransitionEmergencyStatus(
+          currentStatus,
+          "ESCALATION_EXHAUSTED"
+        )
+      ) {
+        const message =
+          "Invalid emergency state transition: " +
+          `${currentStatus} -> ESCALATION_EXHAUSTED`;
+
+        throw new HttpsError(
+          "failed-precondition",
+          message
+        );
+      }
+
       await emergencyRef.set(
         {
           escalationPlan: updatedPlan,
@@ -850,6 +978,22 @@ export const advanceEmergencyEscalation = onCall(
         attemptHistoryCount:
           updatedAttemptHistory.length,
       };
+    }
+
+    if (
+      !canTransitionEmergencyStatus(
+        currentStatus,
+        "ESCALATING"
+      )
+    ) {
+      const message =
+        "Invalid emergency state transition: " +
+        `${currentStatus} -> ESCALATING`;
+
+      throw new HttpsError(
+        "failed-precondition",
+        message
+      );
     }
 
     updatedPlan[nextIndex].status = "NEXT";
