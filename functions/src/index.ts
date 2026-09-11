@@ -11,6 +11,7 @@ import {
   FieldValue,
   Timestamp,
 } from "firebase-admin/firestore";
+import {getMessaging} from "firebase-admin/messaging";
 
 initializeApp();
 
@@ -228,6 +229,10 @@ interface EmergencyNotificationPayload {
   timestamp: string;
 }
 
+interface SendEmergencyNotificationRequest {
+  eventId: string;
+}
+
 interface EscalationPlanItem {
   escalationOrder: number;
   contactId: string;
@@ -342,6 +347,31 @@ function createEmergencyNotificationPayload(
     source: source,
     timestamp: timestamp,
   };
+}
+
+/**
+ * Maps an emergency status to its notification type.
+ *
+ * @param {EmergencyStatus} status Current emergency status.
+ * @return {EmergencyNotificationType} Notification type.
+ */
+function getNotificationTypeForStatus(
+  status: EmergencyStatus
+): EmergencyNotificationType {
+  switch (status) {
+  case "PENDING":
+    return "EMERGENCY_STARTED";
+  case "READY_FOR_ESCALATION":
+    return "ESCALATION_READY";
+  case "ESCALATING":
+    return "ESCALATION_PROGRESS";
+  case "CONTACT_REACHED":
+    return "CONTACT_REACHED";
+  case "ESCALATION_EXHAUSTED":
+    return "ESCALATION_EXHAUSTED";
+  case "CANCELLED":
+    return "EMERGENCY_CANCELLED";
+  }
 }
 
 /**
@@ -2072,6 +2102,237 @@ export const registerDeviceToken = onCall(
         platform,
       enabled:
         true,
+    };
+  }
+);
+
+/**
+ * Sends an emergency notification to the authenticated user's
+ * enabled Firebase Cloud Messaging devices.
+ */
+export const sendEmergencyNotification = onCall(
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "You must be signed in to " +
+        "send an emergency notification."
+      );
+    }
+
+    const data =
+      request.data as SendEmergencyNotificationRequest;
+
+    const eventId =
+      typeof data.eventId === "string" ?
+        data.eventId.trim() :
+        "";
+
+    if (!eventId) {
+      throw new HttpsError(
+        "invalid-argument",
+        "eventId is required."
+      );
+    }
+
+    const uid =
+      request.auth.uid;
+
+    const emergencyRef =
+      db
+        .collection("users")
+        .doc(uid)
+        .collection("emergencies")
+        .doc(eventId);
+
+    const emergencySnapshot =
+      await emergencyRef.get();
+
+    if (!emergencySnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "Emergency event was not found."
+      );
+    }
+
+    const emergencyData =
+      emergencySnapshot.data();
+
+    if (!emergencyData) {
+      throw new HttpsError(
+        "not-found",
+        "Emergency data was not found."
+      );
+    }
+
+    const status =
+      emergencyData.status as
+        EmergencyStatus | undefined;
+
+    if (!status) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Emergency status is missing."
+      );
+    }
+
+    const eventType =
+      typeof emergencyData.eventType ===
+      "string" ?
+        emergencyData.eventType :
+        "UNKNOWN";
+
+    const source =
+      typeof emergencyData.source ===
+      "string" ?
+        emergencyData.source :
+        "UNKNOWN";
+
+    const timestamp =
+      typeof emergencyData.timestamp ===
+      "string" ?
+        emergencyData.timestamp :
+        new Date().toISOString();
+
+    const notificationType =
+      getNotificationTypeForStatus(
+        status
+      );
+
+    const notificationPayload =
+      createEmergencyNotificationPayload(
+        notificationType,
+        eventId,
+        eventType,
+        status,
+        source,
+        timestamp
+      );
+
+    const devicesSnapshot =
+      await db
+        .collection("users")
+        .doc(uid)
+        .collection("devices")
+        .where(
+          "enabled",
+          "==",
+          true
+        )
+        .get();
+
+    const tokens =
+      Array.from(
+        new Set(
+          devicesSnapshot.docs
+            .map((doc) => {
+              const token =
+                doc.data().fcmToken;
+
+              return typeof token ===
+                "string" ?
+                token.trim() :
+                "";
+            })
+            .filter(
+              (token) =>
+                token.length > 0
+            )
+        )
+      );
+
+    if (tokens.length === 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "No enabled FCM device tokens " +
+        "are registered."
+      );
+    }
+
+    const messaging =
+      getMessaging();
+
+    let successCount = 0;
+    let failureCount = 0;
+
+    const batchSize = 500;
+
+    for (
+      let startIndex = 0;
+      startIndex < tokens.length;
+      startIndex += batchSize
+    ) {
+      const batchTokens =
+        tokens.slice(
+          startIndex,
+          startIndex + batchSize
+        );
+
+      const response =
+        await messaging
+          .sendEachForMulticast({
+            tokens:
+              batchTokens,
+            notification: {
+              title:
+                notificationPayload.title,
+              body:
+                notificationPayload.body,
+            },
+            data: {
+              type:
+                notificationPayload.type,
+              eventId:
+                notificationPayload.eventId,
+              eventType:
+                notificationPayload.eventType,
+              status:
+                notificationPayload.status,
+              source:
+                notificationPayload.source,
+              timestamp:
+                notificationPayload.timestamp,
+            },
+          });
+
+      successCount +=
+        response.successCount;
+
+      failureCount +=
+        response.failureCount;
+    }
+
+    logger.info(
+      "Emergency FCM notification attempted",
+      {
+        uid:
+          uid,
+        eventId:
+          eventId,
+        notificationType:
+          notificationPayload.type,
+        targetCount:
+          tokens.length,
+        successCount:
+          successCount,
+        failureCount:
+          failureCount,
+      }
+    );
+
+    return {
+      success:
+        failureCount === 0,
+      emergencyId:
+        eventId,
+      notificationType:
+        notificationPayload.type,
+      targetCount:
+        tokens.length,
+      successCount:
+        successCount,
+      failureCount:
+        failureCount,
     };
   }
 );
