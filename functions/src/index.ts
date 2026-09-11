@@ -233,6 +233,13 @@ interface SendEmergencyNotificationRequest {
   eventId: string;
 }
 
+interface NotificationSendResult {
+  notificationType: EmergencyNotificationType;
+  targetCount: number;
+  successCount: number;
+  failureCount: number;
+}
+
 interface EscalationPlanItem {
   escalationOrder: number;
   contactId: string;
@@ -350,7 +357,7 @@ function createEmergencyNotificationPayload(
 }
 
 /**
- * Maps an emergency status to its notification type.
+ * Maps emergency status to notification type.
  *
  * @param {EmergencyStatus} status Current emergency status.
  * @return {EmergencyNotificationType} Notification type.
@@ -361,17 +368,212 @@ function getNotificationTypeForStatus(
   switch (status) {
   case "PENDING":
     return "EMERGENCY_STARTED";
+
   case "READY_FOR_ESCALATION":
     return "ESCALATION_READY";
+
   case "ESCALATING":
     return "ESCALATION_PROGRESS";
+
   case "CONTACT_REACHED":
     return "CONTACT_REACHED";
+
   case "ESCALATION_EXHAUSTED":
     return "ESCALATION_EXHAUSTED";
+
   case "CANCELLED":
     return "EMERGENCY_CANCELLED";
   }
+}
+
+/**
+ * Attempts to send an emergency FCM notification.
+ *
+ * Notification failure must never roll back or break
+ * the underlying emergency workflow.
+ *
+ * @param {string} uid Authenticated user identifier.
+ * @param {string} eventId Emergency identifier.
+ * @param {string} eventType Emergency event type.
+ * @param {EmergencyStatus} status Emergency status.
+ * @param {string} source Emergency event source.
+ * @param {string} timestamp Emergency timestamp.
+ * @return {Promise<NotificationSendResult>} Send result.
+ */
+async function sendEmergencyNotificationToUser(
+  uid: string,
+  eventId: string,
+  eventType: string,
+  status: EmergencyStatus,
+  source: string,
+  timestamp: string
+): Promise<NotificationSendResult> {
+  const notificationType =
+    getNotificationTypeForStatus(
+      status
+    );
+
+  const notificationPayload =
+    createEmergencyNotificationPayload(
+      notificationType,
+      eventId,
+      eventType,
+      status,
+      source,
+      timestamp
+    );
+
+  const devicesSnapshot =
+    await db
+      .collection("users")
+      .doc(uid)
+      .collection("devices")
+      .where(
+        "enabled",
+        "==",
+        true
+      )
+      .get();
+
+  const tokens =
+    Array.from(
+      new Set(
+        devicesSnapshot.docs
+          .map((doc) => {
+            const token =
+              doc.data().fcmToken;
+
+            return typeof token ===
+              "string" ?
+              token.trim() :
+              "";
+          })
+          .filter(
+            (token) =>
+              token.length > 0
+          )
+      )
+    );
+
+  if (tokens.length === 0) {
+    logger.info(
+      "Emergency notification skipped",
+      {
+        uid: uid,
+        eventId: eventId,
+        notificationType:
+          notificationType,
+        reason:
+          "NO_ENABLED_DEVICE_TOKENS",
+      }
+    );
+
+    return {
+      notificationType:
+        notificationType,
+      targetCount: 0,
+      successCount: 0,
+      failureCount: 0,
+    };
+  }
+
+  const messaging =
+    getMessaging();
+
+  let successCount = 0;
+  let failureCount = 0;
+
+  const batchSize = 500;
+
+  for (
+    let startIndex = 0;
+    startIndex < tokens.length;
+    startIndex += batchSize
+  ) {
+    const batchTokens =
+      tokens.slice(
+        startIndex,
+        startIndex + batchSize
+      );
+
+    try {
+      const response =
+        await messaging
+          .sendEachForMulticast({
+            tokens:
+              batchTokens,
+            notification: {
+              title:
+                notificationPayload.title,
+              body:
+                notificationPayload.body,
+            },
+            data: {
+              type:
+                notificationPayload.type,
+              eventId:
+                notificationPayload.eventId,
+              eventType:
+                notificationPayload.eventType,
+              status:
+                notificationPayload.status,
+              source:
+                notificationPayload.source,
+              timestamp:
+                notificationPayload.timestamp,
+            },
+          });
+
+      successCount +=
+        response.successCount;
+
+      failureCount +=
+        response.failureCount;
+    } catch (error) {
+      failureCount +=
+        batchTokens.length;
+
+      logger.error(
+        "Emergency FCM batch failed",
+        {
+          uid: uid,
+          eventId: eventId,
+          notificationType:
+            notificationType,
+          batchTargetCount:
+            batchTokens.length,
+          error: error,
+        }
+      );
+    }
+  }
+
+  logger.info(
+    "Emergency FCM notification attempted",
+    {
+      uid: uid,
+      eventId: eventId,
+      notificationType:
+        notificationType,
+      targetCount:
+        tokens.length,
+      successCount:
+        successCount,
+      failureCount:
+        failureCount,
+    }
+  );
+
+  return {
+    notificationType:
+      notificationType,
+    targetCount:
+      tokens.length,
+    successCount:
+      successCount,
+    failureCount:
+      failureCount,
+  };
 }
 
 /**
@@ -602,13 +804,15 @@ export const startEmergency = onCall(
       );
     }
 
-    const uid = request.auth.uid;
+    const uid =
+      request.auth.uid;
 
-    const emergencyRef = db
-      .collection("users")
-      .doc(uid)
-      .collection("emergencies")
-      .doc(data.eventId);
+    const emergencyRef =
+      db
+        .collection("users")
+        .doc(uid)
+        .collection("emergencies")
+        .doc(data.eventId);
 
     const existingEmergency =
       await emergencyRef.get();
@@ -622,7 +826,8 @@ export const startEmergency = onCall(
     }
 
     const initialStatus:
-      EmergencyStatus = "PENDING";
+      EmergencyStatus =
+        "PENDING";
 
     const initialHistory =
       createStatusHistoryItem(
@@ -632,11 +837,16 @@ export const startEmergency = onCall(
       );
 
     await emergencyRef.set({
-      eventId: data.eventId,
-      userId: uid,
-      eventType: data.eventType,
-      timestamp: data.timestamp,
-      source: data.source,
+      eventId:
+        data.eventId,
+      userId:
+        uid,
+      eventType:
+        data.eventType,
+      timestamp:
+        data.timestamp,
+      source:
+        data.source,
       location:
         data.location ?? null,
       sensorData:
@@ -655,9 +865,9 @@ export const startEmergency = onCall(
         FieldValue.serverTimestamp(),
     });
 
-    const notificationPayload =
-      createEmergencyNotificationPayload(
-        "EMERGENCY_STARTED",
+    const notificationResult =
+      await sendEmergencyNotificationToUser(
+        uid,
         data.eventId,
         data.eventType,
         initialStatus,
@@ -671,8 +881,8 @@ export const startEmergency = onCall(
         uid: uid,
         eventId: data.eventId,
         status: initialStatus,
-        notificationPayload:
-          notificationPayload,
+        notificationResult:
+          notificationResult,
       }
     );
 
@@ -710,7 +920,8 @@ export const saveContactFeatures = onCall(
       );
     }
 
-    const uid = request.auth.uid;
+    const uid =
+      request.auth.uid;
 
     const callCount =
       data.callCount ?? 0;
@@ -875,36 +1086,44 @@ export const rankContacts = onCall(
     }
 
     const contacts =
-      snapshot.docs.map((doc) => {
-        const data = doc.data();
+      snapshot.docs.map(
+        (doc) => {
+          const data =
+            doc.data();
 
-        return {
-          contactId:
-            data.contactId ?? doc.id,
-          displayName:
-            data.displayName ?? null,
-          phoneHash:
-            data.phoneHash ?? null,
-          trustScore:
-            typeof data.trustScore ===
-            "number" ?
-              data.trustScore :
-              0,
-          isLikelyBusiness:
-            data.isLikelyBusiness ??
-            false,
-          isLikelySpam:
-            data.isLikelySpam ??
-            false,
-        };
-      });
-
-    contacts.sort((a, b) => {
-      return (
-        b.trustScore -
-        a.trustScore
+          return {
+            contactId:
+              data.contactId ??
+              doc.id,
+            displayName:
+              data.displayName ??
+              null,
+            phoneHash:
+              data.phoneHash ??
+              null,
+            trustScore:
+              typeof data.trustScore ===
+              "number" ?
+                data.trustScore :
+                0,
+            isLikelyBusiness:
+              data.isLikelyBusiness ??
+              false,
+            isLikelySpam:
+              data.isLikelySpam ??
+              false,
+          };
+        }
       );
-    });
+
+    contacts.sort(
+      (a, b) => {
+        return (
+          b.trustScore -
+          a.trustScore
+        );
+      }
+    );
 
     const rankedContacts:
       RankedContact[] =
@@ -951,7 +1170,8 @@ export const prepareEmergencyEscalation =
       }
 
       const data =
-        request.data as EscalationRequest;
+        request.data as
+          EscalationRequest;
 
       if (!data.eventId) {
         throw new HttpsError(
@@ -973,7 +1193,9 @@ export const prepareEmergencyEscalation =
       const emergencySnapshot =
         await emergencyRef.get();
 
-      if (!emergencySnapshot.exists) {
+      if (
+        !emergencySnapshot.exists
+      ) {
         throw new HttpsError(
           "not-found",
           "Emergency event was not found."
@@ -1020,10 +1242,13 @@ export const prepareEmergencyEscalation =
       }
 
       const existingPlan =
-        emergencyData?.escalationPlan;
+        emergencyData
+          ?.escalationPlan;
 
       if (
-        Array.isArray(existingPlan) &&
+        Array.isArray(
+          existingPlan
+        ) &&
         existingPlan.length > 0
       ) {
         throw new HttpsError(
@@ -1034,10 +1259,13 @@ export const prepareEmergencyEscalation =
       }
 
       const existingHistory =
-        emergencyData?.attemptHistory;
+        emergencyData
+          ?.attemptHistory;
 
       if (
-        Array.isArray(existingHistory) &&
+        Array.isArray(
+          existingHistory
+        ) &&
         existingHistory.length > 0
       ) {
         throw new HttpsError(
@@ -1066,7 +1294,9 @@ export const prepareEmergencyEscalation =
           .collection("contacts")
           .get();
 
-      if (contactsSnapshot.empty) {
+      if (
+        contactsSnapshot.empty
+      ) {
         throw new HttpsError(
           "failed-precondition",
           "No contacts are available " +
@@ -1076,43 +1306,49 @@ export const prepareEmergencyEscalation =
 
       const eligibleContacts =
         contactsSnapshot.docs
-          .map((doc) => {
-            const contact =
-              doc.data();
+          .map(
+            (doc) => {
+              const contact =
+                doc.data();
 
-            return {
-              contactId:
-                contact.contactId ??
-                doc.id,
-              displayName:
-                contact.displayName ??
-                null,
-              phoneHash:
-                contact.phoneHash ??
-                null,
-              trustScore:
-                typeof contact
-                  .trustScore ===
-                "number" ?
-                  contact.trustScore :
-                  0,
-              isLikelyBusiness:
-                contact
-                  .isLikelyBusiness ??
-                false,
-              isLikelySpam:
-                contact.isLikelySpam ??
-                false,
-            };
-          })
-          .filter((contact) => {
-            return (
-              !contact.isLikelySpam
-            );
-          });
+              return {
+                contactId:
+                  contact.contactId ??
+                  doc.id,
+                displayName:
+                  contact.displayName ??
+                  null,
+                phoneHash:
+                  contact.phoneHash ??
+                  null,
+                trustScore:
+                  typeof contact
+                    .trustScore ===
+                  "number" ?
+                    contact.trustScore :
+                    0,
+                isLikelyBusiness:
+                  contact
+                    .isLikelyBusiness ??
+                  false,
+                isLikelySpam:
+                  contact
+                    .isLikelySpam ??
+                  false,
+              };
+            }
+          )
+          .filter(
+            (contact) => {
+              return (
+                !contact.isLikelySpam
+              );
+            }
+          );
 
       if (
-        eligibleContacts.length === 0
+        eligibleContacts.length ===
+        0
       ) {
         throw new HttpsError(
           "failed-precondition",
@@ -1183,23 +1419,61 @@ export const prepareEmergencyEscalation =
               statusHistoryItem
             ),
           statusChangedAt:
-            FieldValue.serverTimestamp(),
+            FieldValue
+              .serverTimestamp(),
           escalationPreparedAt:
-            FieldValue.serverTimestamp(),
+            FieldValue
+              .serverTimestamp(),
           updatedAt:
-            FieldValue.serverTimestamp(),
+            FieldValue
+              .serverTimestamp(),
         },
         {merge: true}
       );
+
+      const eventType =
+        typeof emergencyData
+          ?.eventType ===
+        "string" ?
+          emergencyData.eventType :
+          "UNKNOWN";
+
+      const source =
+        typeof emergencyData
+          ?.source ===
+        "string" ?
+          emergencyData.source :
+          "UNKNOWN";
+
+      const timestamp =
+        typeof emergencyData
+          ?.timestamp ===
+        "string" ?
+          emergencyData.timestamp :
+          new Date().toISOString();
+
+      const notificationResult =
+        await sendEmergencyNotificationToUser(
+          uid,
+          data.eventId,
+          eventType,
+          "READY_FOR_ESCALATION",
+          source,
+          timestamp
+        );
 
       logger.info(
         "Emergency escalation prepared",
         {
           uid: uid,
-          eventId: data.eventId,
-          fromStatus: currentStatus,
+          eventId:
+            data.eventId,
+          fromStatus:
+            currentStatus,
           toStatus:
             "READY_FOR_ESCALATION",
+          notificationResult:
+            notificationResult,
         }
       );
 
@@ -1291,7 +1565,8 @@ export const advanceEmergencyEscalation =
               emergencySnapshot.data();
 
             const currentStatus =
-              emergencyData?.status as
+              emergencyData
+                ?.status as
                 EmergencyStatus |
                 undefined;
 
@@ -1344,7 +1619,7 @@ export const advanceEmergencyEscalation =
             if (
               !escalationPlan ||
               escalationPlan.length ===
-                0
+              0
             ) {
               throw new HttpsError(
                 "failed-precondition",
@@ -1383,7 +1658,9 @@ export const advanceEmergencyEscalation =
               );
 
             const currentContact =
-              updatedPlan[currentIndex];
+              updatedPlan[
+                currentIndex
+              ];
 
             const existingAttemptHistory =
               Array.isArray(
@@ -1459,9 +1736,10 @@ export const advanceEmergencyEscalation =
                   status:
                     "CONTACT_REACHED",
                   statusHistory:
-                    FieldValue.arrayUnion(
-                      historyItem
-                    ),
+                    FieldValue
+                      .arrayUnion(
+                        historyItem
+                      ),
                   statusChangedAt:
                     FieldValue
                       .serverTimestamp(),
@@ -1549,9 +1827,10 @@ export const advanceEmergencyEscalation =
                   status:
                     "ESCALATION_EXHAUSTED",
                   statusHistory:
-                    FieldValue.arrayUnion(
-                      historyItem
-                    ),
+                    FieldValue
+                      .arrayUnion(
+                        historyItem
+                      ),
                   statusChangedAt:
                     FieldValue
                       .serverTimestamp(),
@@ -1591,7 +1870,9 @@ export const advanceEmergencyEscalation =
               );
             }
 
-            updatedPlan[nextIndex].status =
+            updatedPlan[
+              nextIndex
+            ].status =
               "NEXT";
 
             const historyItem =
@@ -1613,9 +1894,10 @@ export const advanceEmergencyEscalation =
                 status:
                   "ESCALATING",
                 statusHistory:
-                  FieldValue.arrayUnion(
-                    historyItem
-                  ),
+                  FieldValue
+                    .arrayUnion(
+                      historyItem
+                    ),
                 statusChangedAt:
                   FieldValue
                     .serverTimestamp(),
@@ -1637,7 +1919,9 @@ export const advanceEmergencyEscalation =
               currentEscalationIndex:
                 nextIndex,
               nextContact:
-                updatedPlan[nextIndex],
+                updatedPlan[
+                  nextIndex
+                ],
               attemptHistoryCount:
                 updatedAttemptHistory
                   .length,
@@ -1645,11 +1929,59 @@ export const advanceEmergencyEscalation =
           }
         );
 
+      const updatedEmergencySnapshot =
+        await emergencyRef.get();
+
+      const updatedEmergencyData =
+        updatedEmergencySnapshot.data();
+
+      if (
+        updatedEmergencyData
+      ) {
+        const eventType =
+          typeof updatedEmergencyData
+            .eventType ===
+          "string" ?
+            updatedEmergencyData
+              .eventType :
+            "UNKNOWN";
+
+        const source =
+          typeof updatedEmergencyData
+            .source ===
+          "string" ?
+            updatedEmergencyData
+              .source :
+            "UNKNOWN";
+
+        const timestamp =
+          typeof updatedEmergencyData
+            .timestamp ===
+          "string" ?
+            updatedEmergencyData
+              .timestamp :
+            new Date().toISOString();
+
+        const notificationStatus =
+          result.status as
+            EmergencyStatus;
+
+        await sendEmergencyNotificationToUser(
+          uid,
+          data.eventId,
+          eventType,
+          notificationStatus,
+          source,
+          timestamp
+        );
+      }
+
       logger.info(
         "Emergency escalation advanced",
         {
           uid: uid,
-          eventId: data.eventId,
+          eventId:
+            data.eventId,
           attemptResult:
             data.attemptResult,
           status:
@@ -1672,7 +2004,8 @@ export const cancelEmergency = onCall(
     }
 
     const data =
-      request.data as CancelEmergencyRequest;
+      request.data as
+        CancelEmergencyRequest;
 
     if (!data.eventId) {
       throw new HttpsError(
@@ -1699,7 +2032,9 @@ export const cancelEmergency = onCall(
               emergencyRef
             );
 
-          if (!emergencySnapshot.exists) {
+          if (
+            !emergencySnapshot.exists
+          ) {
             throw new HttpsError(
               "not-found",
               "Emergency event was not found."
@@ -1710,7 +2045,8 @@ export const cancelEmergency = onCall(
             emergencySnapshot.data();
 
           const currentStatus =
-            emergencyData?.status as
+            emergencyData
+              ?.status as
               EmergencyStatus |
               undefined;
 
@@ -1723,7 +2059,7 @@ export const cancelEmergency = onCall(
 
           if (
             currentStatus ===
-              "CANCELLED"
+            "CANCELLED"
           ) {
             throw new HttpsError(
               "failed-precondition",
@@ -1770,17 +2106,21 @@ export const cancelEmergency = onCall(
               status:
                 "CANCELLED",
               statusHistory:
-                FieldValue.arrayUnion(
-                  historyItem
-                ),
+                FieldValue
+                  .arrayUnion(
+                    historyItem
+                  ),
               statusChangedAt:
-                FieldValue.serverTimestamp(),
+                FieldValue
+                  .serverTimestamp(),
               cancellationReason:
                 data.reason ?? null,
               cancelledAt:
-                FieldValue.serverTimestamp(),
+                FieldValue
+                  .serverTimestamp(),
               updatedAt:
-                FieldValue.serverTimestamp(),
+                FieldValue
+                  .serverTimestamp(),
             },
             {merge: true}
           );
@@ -1799,11 +2139,55 @@ export const cancelEmergency = onCall(
         }
       );
 
+    const updatedEmergencySnapshot =
+      await emergencyRef.get();
+
+    const updatedEmergencyData =
+      updatedEmergencySnapshot.data();
+
+    if (
+      updatedEmergencyData
+    ) {
+      const eventType =
+        typeof updatedEmergencyData
+          .eventType ===
+        "string" ?
+          updatedEmergencyData
+            .eventType :
+          "UNKNOWN";
+
+      const source =
+        typeof updatedEmergencyData
+          .source ===
+        "string" ?
+          updatedEmergencyData
+            .source :
+          "UNKNOWN";
+
+      const timestamp =
+        typeof updatedEmergencyData
+          .timestamp ===
+        "string" ?
+          updatedEmergencyData
+            .timestamp :
+          new Date().toISOString();
+
+      await sendEmergencyNotificationToUser(
+        uid,
+        data.eventId,
+        eventType,
+        "CANCELLED",
+        source,
+        timestamp
+      );
+    }
+
     logger.info(
       "Emergency cancelled",
       {
         uid: uid,
-        eventId: data.eventId,
+        eventId:
+          data.eventId,
         previousStatus:
           result.previousStatus,
         reason:
@@ -1849,7 +2233,9 @@ export const getEmergencyStatus = onCall(
     const emergencySnapshot =
       await emergencyRef.get();
 
-    if (!emergencySnapshot.exists) {
+    if (
+      !emergencySnapshot.exists
+    ) {
       throw new HttpsError(
         "not-found",
         "Emergency event was not found."
@@ -1868,7 +2254,8 @@ export const getEmergencyStatus = onCall(
 
     const status =
       emergencyData.status as
-        EmergencyStatus | undefined;
+        EmergencyStatus |
+        undefined;
 
     if (!status) {
       throw new HttpsError(
@@ -1879,23 +2266,29 @@ export const getEmergencyStatus = onCall(
 
     const escalationPlan =
       Array.isArray(
-        emergencyData.escalationPlan
+        emergencyData
+          .escalationPlan
       ) ?
-        emergencyData.escalationPlan :
+        emergencyData
+          .escalationPlan :
         [];
 
     const attemptHistory =
       Array.isArray(
-        emergencyData.attemptHistory
+        emergencyData
+          .attemptHistory
       ) ?
-        emergencyData.attemptHistory :
+        emergencyData
+          .attemptHistory :
         [];
 
     const statusHistory =
       Array.isArray(
-        emergencyData.statusHistory
+        emergencyData
+          .statusHistory
       ) ?
-        emergencyData.statusHistory :
+        emergencyData
+          .statusHistory :
         [];
 
     const currentEscalationIndex =
@@ -1913,19 +2306,24 @@ export const getEmergencyStatus = onCall(
       status:
         status,
       eventType:
-        emergencyData.eventType ??
+        emergencyData
+          .eventType ??
         null,
       timestamp:
-        emergencyData.timestamp ??
+        emergencyData
+          .timestamp ??
         null,
       source:
-        emergencyData.source ??
+        emergencyData
+          .source ??
         null,
       location:
-        emergencyData.location ??
+        emergencyData
+          .location ??
         null,
       sensorData:
-        emergencyData.sensorData ??
+        emergencyData
+          .sensorData ??
         null,
       currentEscalationIndex:
         currentEscalationIndex,
@@ -1960,10 +2358,12 @@ export const getEmergencyStatus = onCall(
           .cancelledAt ??
         null,
       createdAt:
-        emergencyData.createdAt ??
+        emergencyData
+          .createdAt ??
         null,
       updatedAt:
-        emergencyData.updatedAt ??
+        emergencyData
+          .updatedAt ??
         null,
     };
   }
@@ -1984,20 +2384,24 @@ export const registerDeviceToken = onCall(
     }
 
     const data =
-      request.data as RegisterDeviceTokenRequest;
+      request.data as
+        RegisterDeviceTokenRequest;
 
     const deviceId =
-      typeof data.deviceId === "string" ?
+      typeof data.deviceId ===
+      "string" ?
         data.deviceId.trim() :
         "";
 
     const token =
-      typeof data.token === "string" ?
+      typeof data.token ===
+      "string" ?
         data.token.trim() :
         "";
 
     const platform =
-      data.platform ?? "unknown";
+      data.platform ??
+      "unknown";
 
     if (!deviceId) {
       throw new HttpsError(
@@ -2013,14 +2417,18 @@ export const registerDeviceToken = onCall(
       );
     }
 
-    if (deviceId.length > 200) {
+    if (
+      deviceId.length > 200
+    ) {
       throw new HttpsError(
         "invalid-argument",
         "deviceId is too long."
       );
     }
 
-    if (token.length > 4096) {
+    if (
+      token.length > 4096
+    ) {
       throw new HttpsError(
         "invalid-argument",
         "FCM token is too long."
@@ -2061,9 +2469,13 @@ export const registerDeviceToken = onCall(
 
     const createdAt =
       existingDevice.exists ?
-        existingDevice.data()?.createdAt ??
-          FieldValue.serverTimestamp() :
-        FieldValue.serverTimestamp();
+        existingDevice
+          .data()
+          ?.createdAt ??
+          FieldValue
+            .serverTimestamp() :
+        FieldValue
+          .serverTimestamp();
 
     await deviceRef.set(
       {
@@ -2078,9 +2490,11 @@ export const registerDeviceToken = onCall(
         createdAt:
           createdAt,
         tokenUpdatedAt:
-          FieldValue.serverTimestamp(),
+          FieldValue
+            .serverTimestamp(),
         updatedAt:
-          FieldValue.serverTimestamp(),
+          FieldValue
+            .serverTimestamp(),
       },
       {merge: true}
     );
@@ -2089,8 +2503,10 @@ export const registerDeviceToken = onCall(
       "FCM device token registered",
       {
         uid: uid,
-        deviceId: deviceId,
-        platform: platform,
+        deviceId:
+          deviceId,
+        platform:
+          platform,
       }
     );
 
@@ -2107,8 +2523,7 @@ export const registerDeviceToken = onCall(
 );
 
 /**
- * Sends an emergency notification to the authenticated user's
- * enabled Firebase Cloud Messaging devices.
+ * Manually sends a notification for an emergency.
  */
 export const sendEmergencyNotification = onCall(
   async (request) => {
@@ -2121,10 +2536,12 @@ export const sendEmergencyNotification = onCall(
     }
 
     const data =
-      request.data as SendEmergencyNotificationRequest;
+      request.data as
+        SendEmergencyNotificationRequest;
 
     const eventId =
-      typeof data.eventId === "string" ?
+      typeof data.eventId ===
+      "string" ?
         data.eventId.trim() :
         "";
 
@@ -2148,7 +2565,9 @@ export const sendEmergencyNotification = onCall(
     const emergencySnapshot =
       await emergencyRef.get();
 
-    if (!emergencySnapshot.exists) {
+    if (
+      !emergencySnapshot.exists
+    ) {
       throw new HttpsError(
         "not-found",
         "Emergency event was not found."
@@ -2167,7 +2586,8 @@ export const sendEmergencyNotification = onCall(
 
     const status =
       emergencyData.status as
-        EmergencyStatus | undefined;
+        EmergencyStatus |
+        undefined;
 
     if (!status) {
       throw new HttpsError(
@@ -2177,31 +2597,32 @@ export const sendEmergencyNotification = onCall(
     }
 
     const eventType =
-      typeof emergencyData.eventType ===
+      typeof emergencyData
+        .eventType ===
       "string" ?
-        emergencyData.eventType :
+        emergencyData
+          .eventType :
         "UNKNOWN";
 
     const source =
-      typeof emergencyData.source ===
+      typeof emergencyData
+        .source ===
       "string" ?
-        emergencyData.source :
+        emergencyData
+          .source :
         "UNKNOWN";
 
     const timestamp =
-      typeof emergencyData.timestamp ===
+      typeof emergencyData
+        .timestamp ===
       "string" ?
-        emergencyData.timestamp :
+        emergencyData
+          .timestamp :
         new Date().toISOString();
 
-    const notificationType =
-      getNotificationTypeForStatus(
-        status
-      );
-
-    const notificationPayload =
-      createEmergencyNotificationPayload(
-        notificationType,
+    const notificationResult =
+      await sendEmergencyNotificationToUser(
+        uid,
         eventId,
         eventType,
         status,
@@ -2209,130 +2630,26 @@ export const sendEmergencyNotification = onCall(
         timestamp
       );
 
-    const devicesSnapshot =
-      await db
-        .collection("users")
-        .doc(uid)
-        .collection("devices")
-        .where(
-          "enabled",
-          "==",
-          true
-        )
-        .get();
-
-    const tokens =
-      Array.from(
-        new Set(
-          devicesSnapshot.docs
-            .map((doc) => {
-              const token =
-                doc.data().fcmToken;
-
-              return typeof token ===
-                "string" ?
-                token.trim() :
-                "";
-            })
-            .filter(
-              (token) =>
-                token.length > 0
-            )
-        )
-      );
-
-    if (tokens.length === 0) {
-      throw new HttpsError(
-        "failed-precondition",
-        "No enabled FCM device tokens " +
-        "are registered."
-      );
-    }
-
-    const messaging =
-      getMessaging();
-
-    let successCount = 0;
-    let failureCount = 0;
-
-    const batchSize = 500;
-
-    for (
-      let startIndex = 0;
-      startIndex < tokens.length;
-      startIndex += batchSize
-    ) {
-      const batchTokens =
-        tokens.slice(
-          startIndex,
-          startIndex + batchSize
-        );
-
-      const response =
-        await messaging
-          .sendEachForMulticast({
-            tokens:
-              batchTokens,
-            notification: {
-              title:
-                notificationPayload.title,
-              body:
-                notificationPayload.body,
-            },
-            data: {
-              type:
-                notificationPayload.type,
-              eventId:
-                notificationPayload.eventId,
-              eventType:
-                notificationPayload.eventType,
-              status:
-                notificationPayload.status,
-              source:
-                notificationPayload.source,
-              timestamp:
-                notificationPayload.timestamp,
-            },
-          });
-
-      successCount +=
-        response.successCount;
-
-      failureCount +=
-        response.failureCount;
-    }
-
-    logger.info(
-      "Emergency FCM notification attempted",
-      {
-        uid:
-          uid,
-        eventId:
-          eventId,
-        notificationType:
-          notificationPayload.type,
-        targetCount:
-          tokens.length,
-        successCount:
-          successCount,
-        failureCount:
-          failureCount,
-      }
-    );
-
     return {
       success:
-        failureCount === 0,
+        notificationResult
+          .failureCount === 0 &&
+        notificationResult
+          .successCount > 0,
       emergencyId:
         eventId,
       notificationType:
-        notificationPayload.type,
+        notificationResult
+          .notificationType,
       targetCount:
-        tokens.length,
+        notificationResult
+          .targetCount,
       successCount:
-        successCount,
+        notificationResult
+          .successCount,
       failureCount:
-        failureCount,
+        notificationResult
+          .failureCount,
     };
   }
 );
