@@ -199,6 +199,16 @@ interface GetEmergencyStatusRequest {
   eventId: string;
 }
 
+interface RegisterDeviceTokenRequest {
+  deviceId: string;
+  token: string;
+  platform?:
+    | "android"
+    | "ios"
+    | "web"
+    | "unknown";
+}
+
 interface EscalationPlanItem {
   escalationOrder: number;
   contactId: string;
@@ -1828,6 +1838,143 @@ export const getEmergencyStatus = onCall(
       updatedAt:
         emergencyData.updatedAt ??
         null,
+    };
+  }
+);
+
+/**
+ * Registers or refreshes an authenticated user's
+ * Firebase Cloud Messaging device token.
+ */
+export const registerDeviceToken = onCall(
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "You must be signed in to " +
+        "register a device token."
+      );
+    }
+
+    const data =
+      request.data as RegisterDeviceTokenRequest;
+
+    const deviceId =
+      typeof data.deviceId === "string" ?
+        data.deviceId.trim() :
+        "";
+
+    const token =
+      typeof data.token === "string" ?
+        data.token.trim() :
+        "";
+
+    const platform =
+      data.platform ?? "unknown";
+
+    if (!deviceId) {
+      throw new HttpsError(
+        "invalid-argument",
+        "deviceId is required."
+      );
+    }
+
+    if (!token) {
+      throw new HttpsError(
+        "invalid-argument",
+        "FCM token is required."
+      );
+    }
+
+    if (deviceId.length > 200) {
+      throw new HttpsError(
+        "invalid-argument",
+        "deviceId is too long."
+      );
+    }
+
+    if (token.length > 4096) {
+      throw new HttpsError(
+        "invalid-argument",
+        "FCM token is too long."
+      );
+    }
+
+    const allowedPlatforms = [
+      "android",
+      "ios",
+      "web",
+      "unknown",
+    ];
+
+    if (
+      !allowedPlatforms.includes(
+        platform
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "platform must be android, ios, " +
+        "web, or unknown."
+      );
+    }
+
+    const uid =
+      request.auth.uid;
+
+    const deviceRef =
+      db
+        .collection("users")
+        .doc(uid)
+        .collection("devices")
+        .doc(deviceId);
+
+    const existingDevice =
+      await deviceRef.get();
+
+    const createdAt =
+      existingDevice.exists ?
+        existingDevice.data()?.createdAt ??
+          FieldValue.serverTimestamp() :
+        FieldValue.serverTimestamp();
+
+    await deviceRef.set(
+      {
+        deviceId:
+          deviceId,
+        fcmToken:
+          token,
+        platform:
+          platform,
+        enabled:
+          true,
+        createdAt:
+          createdAt,
+        tokenUpdatedAt:
+          FieldValue.serverTimestamp(),
+        updatedAt:
+          FieldValue.serverTimestamp(),
+      },
+      {merge: true}
+    );
+
+    logger.info(
+      "FCM device token registered",
+      {
+        uid: uid,
+        deviceId: deviceId,
+        platform: platform,
+      }
+    );
+
+    return {
+      success: true,
+      deviceId:
+        deviceId,
+      platform:
+        platform,
+      enabled:
+        true,
     };
   }
 );
