@@ -1,4 +1,4 @@
-import {
+﻿import {
   onRequest,
   onCall,
   HttpsError,
@@ -238,6 +238,8 @@ interface NotificationSendResult {
   targetCount: number;
   successCount: number;
   failureCount: number;
+  invalidTokenCount: number;
+  notificationLogId: string;
 }
 
 interface EscalationPlanItem {
@@ -435,27 +437,83 @@ async function sendEmergencyNotificationToUser(
       )
       .get();
 
+  const tokenToDeviceIds =
+    new Map<string, string[]>();
+
+  devicesSnapshot.docs.forEach(
+    (deviceDoc) => {
+      const token =
+        deviceDoc.data().fcmToken;
+
+      if (
+        typeof token !== "string" ||
+        token.trim().length === 0
+      ) {
+        return;
+      }
+
+      const normalizedToken =
+        token.trim();
+
+      const deviceIds =
+        tokenToDeviceIds.get(
+          normalizedToken
+        ) ?? [];
+
+      deviceIds.push(
+        deviceDoc.id
+      );
+
+      tokenToDeviceIds.set(
+        normalizedToken,
+        deviceIds
+      );
+    }
+  );
+
   const tokens =
     Array.from(
-      new Set(
-        devicesSnapshot.docs
-          .map((doc) => {
-            const token =
-              doc.data().fcmToken;
-
-            return typeof token ===
-              "string" ?
-              token.trim() :
-              "";
-          })
-          .filter(
-            (token) =>
-              token.length > 0
-          )
-      )
+      tokenToDeviceIds.keys()
     );
 
+  const notificationLogRef =
+    db
+      .collection("users")
+      .doc(uid)
+      .collection("notificationLogs")
+      .doc();
+
+  await notificationLogRef.set({
+    eventId: eventId,
+    eventType: eventType,
+    notificationType:
+      notificationType,
+    status: status,
+    source: source,
+    timestamp: timestamp,
+    targetCount:
+      tokens.length,
+    successCount: 0,
+    failureCount: 0,
+    invalidTokenCount: 0,
+    result: "PENDING_SEND",
+    createdAt:
+      FieldValue.serverTimestamp(),
+    updatedAt:
+      FieldValue.serverTimestamp(),
+  });
+
   if (tokens.length === 0) {
+    await notificationLogRef.set(
+      {
+        result:
+          "SKIPPED_NO_ENABLED_DEVICE_TOKENS",
+        updatedAt:
+          FieldValue.serverTimestamp(),
+      },
+      {merge: true}
+    );
+
     logger.info(
       "Emergency notification skipped",
       {
@@ -463,6 +521,8 @@ async function sendEmergencyNotificationToUser(
         eventId: eventId,
         notificationType:
           notificationType,
+        notificationLogId:
+          notificationLogRef.id,
         reason:
           "NO_ENABLED_DEVICE_TOKENS",
       }
@@ -474,6 +534,9 @@ async function sendEmergencyNotificationToUser(
       targetCount: 0,
       successCount: 0,
       failureCount: 0,
+      invalidTokenCount: 0,
+      notificationLogId:
+        notificationLogRef.id,
     };
   }
 
@@ -482,6 +545,15 @@ async function sendEmergencyNotificationToUser(
 
   let successCount = 0;
   let failureCount = 0;
+
+  const invalidTokens =
+    new Set<string>();
+
+  const permanentTokenErrors =
+    new Set([
+      "messaging/registration-token-not-registered",
+      "messaging/invalid-registration-token",
+    ]);
 
   const batchSize = 500;
 
@@ -529,6 +601,35 @@ async function sendEmergencyNotificationToUser(
 
       failureCount +=
         response.failureCount;
+
+      response.responses.forEach(
+        (sendResponse, index) => {
+          if (
+            sendResponse.success ||
+            !sendResponse.error
+          ) {
+            return;
+          }
+
+          const errorCode =
+            sendResponse.error.code;
+
+          if (
+            permanentTokenErrors.has(
+              errorCode
+            )
+          ) {
+            const token =
+              batchTokens[index];
+
+            if (token) {
+              invalidTokens.add(
+                token
+              );
+            }
+          }
+        }
+      );
     } catch (error) {
       failureCount +=
         batchTokens.length;
@@ -540,6 +641,8 @@ async function sendEmergencyNotificationToUser(
           eventId: eventId,
           notificationType:
             notificationType,
+          notificationLogId:
+            notificationLogRef.id,
           batchTargetCount:
             batchTokens.length,
           error: error,
@@ -548,6 +651,69 @@ async function sendEmergencyNotificationToUser(
     }
   }
 
+  let invalidTokenCount = 0;
+
+  for (
+    const invalidToken of
+    invalidTokens
+  ) {
+    const deviceIds =
+      tokenToDeviceIds.get(
+        invalidToken
+      ) ?? [];
+
+    for (
+      const deviceId of
+      deviceIds
+    ) {
+      const deviceRef =
+        db
+          .collection("users")
+          .doc(uid)
+          .collection("devices")
+          .doc(deviceId);
+
+      await deviceRef.set(
+        {
+          enabled: false,
+          invalidatedAt:
+            FieldValue.serverTimestamp(),
+          invalidReason:
+            "FCM_TOKEN_INVALID_OR_EXPIRED",
+          updatedAt:
+            FieldValue.serverTimestamp(),
+        },
+        {merge: true}
+      );
+
+      invalidTokenCount += 1;
+    }
+  }
+
+  const result =
+    failureCount === 0 ?
+      "SUCCESS" :
+      successCount > 0 ?
+        "PARTIAL_FAILURE" :
+        "FAILED";
+
+  await notificationLogRef.set(
+    {
+      targetCount:
+        tokens.length,
+      successCount:
+        successCount,
+      failureCount:
+        failureCount,
+      invalidTokenCount:
+        invalidTokenCount,
+      result: result,
+      updatedAt:
+        FieldValue.serverTimestamp(),
+    },
+    {merge: true}
+  );
+
   logger.info(
     "Emergency FCM notification attempted",
     {
@@ -555,12 +721,16 @@ async function sendEmergencyNotificationToUser(
       eventId: eventId,
       notificationType:
         notificationType,
+      notificationLogId:
+        notificationLogRef.id,
       targetCount:
         tokens.length,
       successCount:
         successCount,
       failureCount:
         failureCount,
+      invalidTokenCount:
+        invalidTokenCount,
     }
   );
 
@@ -573,6 +743,10 @@ async function sendEmergencyNotificationToUser(
       successCount,
     failureCount:
       failureCount,
+    invalidTokenCount:
+      invalidTokenCount,
+    notificationLogId:
+      notificationLogRef.id,
   };
 }
 
@@ -2650,6 +2824,14 @@ export const sendEmergencyNotification = onCall(
       failureCount:
         notificationResult
           .failureCount,
+      invalidTokenCount:
+        notificationResult
+          .invalidTokenCount,
+      notificationLogId:
+        notificationResult
+          .notificationLogId,
     };
   }
 );
+
+
