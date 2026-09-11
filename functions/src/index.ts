@@ -209,6 +209,25 @@ interface RegisterDeviceTokenRequest {
     | "unknown";
 }
 
+type EmergencyNotificationType =
+  | "EMERGENCY_STARTED"
+  | "ESCALATION_READY"
+  | "ESCALATION_PROGRESS"
+  | "CONTACT_REACHED"
+  | "ESCALATION_EXHAUSTED"
+  | "EMERGENCY_CANCELLED";
+
+interface EmergencyNotificationPayload {
+  type: EmergencyNotificationType;
+  eventId: string;
+  eventType: string;
+  status: EmergencyStatus;
+  title: string;
+  body: string;
+  source: string;
+  timestamp: string;
+}
+
 interface EscalationPlanItem {
   escalationOrder: number;
   contactId: string;
@@ -256,6 +275,72 @@ function createStatusHistoryItem(
     toStatus: toStatus,
     changedAt: Timestamp.now(),
     reason: reason,
+  };
+}
+
+/**
+ * Creates a consistent emergency notification payload.
+ *
+ * @param {EmergencyNotificationType} type Notification type.
+ * @param {string} eventId Emergency event identifier.
+ * @param {string} eventType Emergency event type.
+ * @param {EmergencyStatus} status Current emergency status.
+ * @param {string} source Emergency source.
+ * @param {string} timestamp Emergency timestamp.
+ * @return {EmergencyNotificationPayload} Notification payload.
+ */
+function createEmergencyNotificationPayload(
+  type: EmergencyNotificationType,
+  eventId: string,
+  eventType: string,
+  status: EmergencyStatus,
+  source: string,
+  timestamp: string
+): EmergencyNotificationPayload {
+  const messages: Record<
+    EmergencyNotificationType,
+    {
+      title: string;
+      body: string;
+    }
+  > = {
+    EMERGENCY_STARTED: {
+      title: "Rapid Reach Emergency",
+      body: "An emergency event has been started.",
+    },
+    ESCALATION_READY: {
+      title: "Emergency Escalation Ready",
+      body: "Emergency contacts are ready for escalation.",
+    },
+    ESCALATION_PROGRESS: {
+      title: "Emergency Escalation",
+      body: "Rapid Reach is trying the next emergency contact.",
+    },
+    CONTACT_REACHED: {
+      title: "Emergency Contact Reached",
+      body: "An emergency contact has answered.",
+    },
+    ESCALATION_EXHAUSTED: {
+      title: "Emergency Escalation Exhausted",
+      body: "No emergency contact could be reached.",
+    },
+    EMERGENCY_CANCELLED: {
+      title: "Emergency Cancelled",
+      body: "The emergency event has been cancelled.",
+    },
+  };
+
+  const message = messages[type];
+
+  return {
+    type: type,
+    eventId: eventId,
+    eventType: eventType,
+    status: status,
+    title: message.title,
+    body: message.body,
+    source: source,
+    timestamp: timestamp,
   };
 }
 
@@ -540,12 +625,24 @@ export const startEmergency = onCall(
         FieldValue.serverTimestamp(),
     });
 
+    const notificationPayload =
+      createEmergencyNotificationPayload(
+        "EMERGENCY_STARTED",
+        data.eventId,
+        data.eventType,
+        initialStatus,
+        data.source,
+        data.timestamp
+      );
+
     logger.info(
       "Emergency started",
       {
         uid: uid,
         eventId: data.eventId,
         status: initialStatus,
+        notificationPayload:
+          notificationPayload,
       }
     );
 
