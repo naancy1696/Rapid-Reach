@@ -952,6 +952,280 @@ function calculateTrustScore(
   );
 }
 
+const MAX_EVENT_ID_LENGTH = 200;
+const MAX_CONTACT_ID_LENGTH = 200;
+const MAX_EVENT_TYPE_LENGTH = 100;
+const MAX_SOURCE_LENGTH = 100;
+const MAX_DISPLAY_NAME_LENGTH = 200;
+const MAX_PHONE_HASH_LENGTH = 512;
+const MAX_REASON_LENGTH = 500;
+const MAX_TIMESTAMP_LENGTH = 64;
+
+/**
+ * Normalizes a required string input.
+ *
+ * @param {unknown} value Raw input value.
+ * @param {string} fieldName Input field name.
+ * @param {number} maxLength Maximum allowed length.
+ * @return {string} Normalized string.
+ */
+function normalizeRequiredString(
+  value: unknown,
+  fieldName: string,
+  maxLength: number
+): string {
+  if (typeof value !== "string") {
+    throw new HttpsError(
+      "invalid-argument",
+      `${fieldName} is required.`
+    );
+  }
+
+  const normalized = value.trim();
+
+  if (!normalized) {
+    throw new HttpsError(
+      "invalid-argument",
+      `${fieldName} is required.`
+    );
+  }
+
+  if (normalized.length > maxLength) {
+    throw new HttpsError(
+      "invalid-argument",
+      `${fieldName} is too long.`
+    );
+  }
+
+  return normalized;
+}
+
+/**
+ * Normalizes an optional string input.
+ *
+ * @param {unknown} value Raw input value.
+ * @param {string} fieldName Input field name.
+ * @param {number} maxLength Maximum allowed length.
+ * @return {string|null} Normalized string or null.
+ */
+function normalizeOptionalString(
+  value: unknown,
+  fieldName: string,
+  maxLength: number
+): string | null {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    throw new HttpsError(
+      "invalid-argument",
+      `${fieldName} must be a string.`
+    );
+  }
+
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.length > maxLength) {
+    throw new HttpsError(
+      "invalid-argument",
+      `${fieldName} is too long.`
+    );
+  }
+
+  return normalized;
+}
+
+/**
+ * Normalizes an identifier used as a Firestore document ID.
+ *
+ * @param {unknown} value Raw identifier.
+ * @param {string} fieldName Field name.
+ * @param {number} maxLength Maximum length.
+ * @return {string} Safe identifier.
+ */
+function normalizeDocumentId(
+  value: unknown,
+  fieldName: string,
+  maxLength: number
+): string {
+  const normalized = normalizeRequiredString(
+    value,
+    fieldName,
+    maxLength
+  );
+
+  if (normalized.includes("/")) {
+    throw new HttpsError(
+      "invalid-argument",
+      `${fieldName} cannot contain '/'.`
+    );
+  }
+
+  return normalized;
+}
+
+/**
+ * Validates and normalizes an ISO-compatible timestamp string.
+ *
+ * @param {unknown} value Raw timestamp.
+ * @param {string} fieldName Field name.
+ * @return {string} Normalized timestamp.
+ */
+function normalizeTimestamp(
+  value: unknown,
+  fieldName: string
+): string {
+  const normalized = normalizeRequiredString(
+    value,
+    fieldName,
+    MAX_TIMESTAMP_LENGTH
+  );
+
+  if (Number.isNaN(Date.parse(normalized))) {
+    throw new HttpsError(
+      "invalid-argument",
+      `${fieldName} must be a valid timestamp.`
+    );
+  }
+
+  return normalized;
+}
+
+/**
+ * Validates a non-negative finite number.
+ *
+ * @param {unknown} value Raw numeric input.
+ * @param {string} fieldName Field name.
+ * @param {boolean} integerOnly Require an integer value.
+ * @return {number} Validated number.
+ */
+function normalizeNonNegativeNumber(
+  value: unknown,
+  fieldName: string,
+  integerOnly = false
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    (integerOnly && !Number.isInteger(value))
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      integerOnly ?
+        `${fieldName} must be a non-negative integer.` :
+        `${fieldName} must be a non-negative number.`
+    );
+  }
+
+  return value;
+}
+
+/**
+ * Validates optional emergency location data.
+ *
+ * @param {Object|undefined} location Location input.
+ * @return {Object|null} Validated location.
+ */
+function normalizeLocation(
+  location: EmergencyEventData["location"]
+): EmergencyEventData["location"] | null {
+  if (location === undefined) {
+    return null;
+  }
+
+  if (
+    typeof location !== "object" ||
+    location === null ||
+    typeof location.latitude !== "number" ||
+    !Number.isFinite(location.latitude) ||
+    typeof location.longitude !== "number" ||
+    !Number.isFinite(location.longitude) ||
+    location.latitude < -90 ||
+    location.latitude > 90 ||
+    location.longitude < -180 ||
+    location.longitude > 180
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "location must contain valid latitude and longitude."
+    );
+  }
+
+  return {
+    latitude: location.latitude,
+    longitude: location.longitude,
+  };
+}
+
+/**
+ * Validates optional sensor readings.
+ *
+ * @param {Object|undefined} sensorData Sensor input.
+ * @return {Object|null} Validated sensor data.
+ */
+function normalizeSensorData(
+  sensorData: EmergencyEventData["sensorData"]
+): EmergencyEventData["sensorData"] | null {
+  if (sensorData === undefined) {
+    return null;
+  }
+
+  if (
+    typeof sensorData !== "object" ||
+    sensorData === null
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "sensorData must be an object."
+    );
+  }
+
+  const normalized: EmergencyEventData["sensorData"] = {};
+
+  if (sensorData.heartRate !== undefined) {
+    if (
+      typeof sensorData.heartRate !== "number" ||
+      !Number.isFinite(sensorData.heartRate) ||
+      sensorData.heartRate < 0 ||
+      sensorData.heartRate > 300
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "heartRate must be between 0 and 300."
+      );
+    }
+
+    normalized.heartRate = sensorData.heartRate;
+  }
+
+  if (sensorData.spo2 !== undefined) {
+    if (
+      typeof sensorData.spo2 !== "number" ||
+      !Number.isFinite(sensorData.spo2) ||
+      sensorData.spo2 < 0 ||
+      sensorData.spo2 > 100
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "spo2 must be between 0 and 100."
+      );
+    }
+
+    normalized.spo2 = sensorData.spo2;
+  }
+
+  return normalized;
+}
+
 export const startEmergency = onCall(
   async (request) => {
     if (!request.auth) {
@@ -963,20 +1237,44 @@ export const startEmergency = onCall(
     }
 
     const data =
-      request.data as EmergencyEventData;
+      (request.data ?? {}) as EmergencyEventData;
 
-    if (
-      !data.eventId ||
-      !data.eventType ||
-      !data.timestamp ||
-      !data.source
-    ) {
-      throw new HttpsError(
-        "invalid-argument",
-        "eventId, eventType, timestamp, " +
-        "and source are required."
+    const eventId =
+      normalizeDocumentId(
+        data.eventId,
+        "eventId",
+        MAX_EVENT_ID_LENGTH
       );
-    }
+
+    const eventType =
+      normalizeRequiredString(
+        data.eventType,
+        "eventType",
+        MAX_EVENT_TYPE_LENGTH
+      );
+
+    const timestamp =
+      normalizeTimestamp(
+        data.timestamp,
+        "timestamp"
+      );
+
+    const source =
+      normalizeRequiredString(
+        data.source,
+        "source",
+        MAX_SOURCE_LENGTH
+      );
+
+    const location =
+      normalizeLocation(
+        data.location
+      );
+
+    const sensorData =
+      normalizeSensorData(
+        data.sensorData
+      );
 
     const uid =
       request.auth.uid;
@@ -986,7 +1284,7 @@ export const startEmergency = onCall(
         .collection("users")
         .doc(uid)
         .collection("emergencies")
-        .doc(data.eventId);
+        .doc(eventId);
 
     const existingEmergency =
       await emergencyRef.get();
@@ -1012,19 +1310,19 @@ export const startEmergency = onCall(
 
     await emergencyRef.set({
       eventId:
-        data.eventId,
+        eventId,
       userId:
         uid,
       eventType:
-        data.eventType,
+        eventType,
       timestamp:
-        data.timestamp,
+        timestamp,
       source:
-        data.source,
+        source,
       location:
-        data.location ?? null,
+        location,
       sensorData:
-        data.sensorData ?? null,
+        sensorData,
       status:
         initialStatus,
       statusHistory: [
@@ -1042,18 +1340,18 @@ export const startEmergency = onCall(
     const notificationResult =
       await sendEmergencyNotificationToUser(
         uid,
-        data.eventId,
-        data.eventType,
+        eventId,
+        eventType,
         initialStatus,
-        data.source,
-        data.timestamp
+        source,
+        timestamp
       );
 
     logger.info(
       "Emergency started",
       {
         uid: uid,
-        eventId: data.eventId,
+        eventId: eventId,
         status: initialStatus,
         notificationResult:
           notificationResult,
@@ -1063,7 +1361,7 @@ export const startEmergency = onCall(
     return {
       success: true,
       emergencyId:
-        data.eventId,
+        eventId,
       status:
         initialStatus,
     };
@@ -1081,42 +1379,97 @@ export const saveContactFeatures = onCall(
     }
 
     const data =
-      request.data as ContactFeatures;
+      (request.data ?? {}) as ContactFeatures;
 
-    if (
-      !data.contactId ||
-      !data.phoneHash
-    ) {
-      throw new HttpsError(
-        "invalid-argument",
-        "contactId and phoneHash " +
-        "are required."
+    const contactId =
+      normalizeDocumentId(
+        data.contactId,
+        "contactId",
+        MAX_CONTACT_ID_LENGTH
       );
-    }
+
+    const phoneHash =
+      normalizeRequiredString(
+        data.phoneHash,
+        "phoneHash",
+        MAX_PHONE_HASH_LENGTH
+      );
+
+    const displayName =
+      normalizeOptionalString(
+        data.displayName,
+        "displayName",
+        MAX_DISPLAY_NAME_LENGTH
+      );
 
     const uid =
       request.auth.uid;
 
     const callCount =
-      data.callCount ?? 0;
+      normalizeNonNegativeNumber(
+        data.callCount ?? 0,
+        "callCount",
+        true
+      );
 
     const answeredCalls =
-      data.answeredCalls ?? 0;
+      normalizeNonNegativeNumber(
+        data.answeredCalls ?? 0,
+        "answeredCalls",
+        true
+      );
+
+    const missedCalls =
+      normalizeNonNegativeNumber(
+        data.missedCalls ?? 0,
+        "missedCalls",
+        true
+      );
 
     const totalDurationSeconds =
-      data.totalDurationSeconds ?? 0;
+      normalizeNonNegativeNumber(
+        data.totalDurationSeconds ?? 0,
+        "totalDurationSeconds",
+        true
+      );
 
     const communicationDays =
-      data.communicationDays ?? 0;
+      normalizeNonNegativeNumber(
+        data.communicationDays ?? 0,
+        "communicationDays",
+        true
+      );
+
+    if (answeredCalls > callCount) {
+      throw new HttpsError(
+        "invalid-argument",
+        "answeredCalls cannot exceed callCount."
+      );
+    }
 
     const lastContactAt =
-      data.lastContactAt;
+      data.lastContactAt === undefined ?
+        undefined :
+        normalizeTimestamp(
+          data.lastContactAt,
+          "lastContactAt"
+        );
 
     const isLikelyBusiness =
       data.isLikelyBusiness ?? false;
 
     const isLikelySpam =
       data.isLikelySpam ?? false;
+
+    if (
+      typeof isLikelyBusiness !== "boolean" ||
+      typeof isLikelySpam !== "boolean"
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "isLikelyBusiness and isLikelySpam must be boolean values."
+      );
+    }
 
     const answerRateScore =
       calculateAnswerRateScore(
@@ -1164,21 +1517,21 @@ export const saveContactFeatures = onCall(
       .collection("users")
       .doc(uid)
       .collection("contacts")
-      .doc(data.contactId)
+      .doc(contactId)
       .set(
         {
           contactId:
-            data.contactId,
+            contactId,
           displayName:
-            data.displayName ?? null,
+            displayName,
           phoneHash:
-            data.phoneHash,
+            phoneHash,
           callCount:
             callCount,
           answeredCalls:
             answeredCalls,
           missedCalls:
-            data.missedCalls ?? 0,
+            missedCalls,
           totalDurationSeconds:
             totalDurationSeconds,
           lastContactAt:
@@ -1212,7 +1565,7 @@ export const saveContactFeatures = onCall(
     return {
       success: true,
       contactId:
-        data.contactId,
+        contactId,
       answerRateScore:
         answerRateScore,
       frequencyScore:
@@ -1344,15 +1697,15 @@ export const prepareEmergencyEscalation =
       }
 
       const data =
-        request.data as
+        (request.data ?? {}) as
           EscalationRequest;
 
-      if (!data.eventId) {
-        throw new HttpsError(
-          "invalid-argument",
-          "eventId is required."
+      const eventId =
+        normalizeDocumentId(
+          data.eventId,
+          "eventId",
+          MAX_EVENT_ID_LENGTH
         );
-      }
 
       const uid =
         request.auth.uid;
@@ -1362,7 +1715,7 @@ export const prepareEmergencyEscalation =
           .collection("users")
           .doc(uid)
           .collection("emergencies")
-          .doc(data.eventId);
+          .doc(eventId);
 
       const emergencySnapshot =
         await emergencyRef.get();
@@ -1629,7 +1982,7 @@ export const prepareEmergencyEscalation =
       const notificationResult =
         await sendEmergencyNotificationToUser(
           uid,
-          data.eventId,
+          eventId,
           eventType,
           "READY_FOR_ESCALATION",
           source,
@@ -1641,7 +1994,7 @@ export const prepareEmergencyEscalation =
         {
           uid: uid,
           eventId:
-            data.eventId,
+            eventId,
           fromStatus:
             currentStatus,
           toStatus:
@@ -1654,7 +2007,7 @@ export const prepareEmergencyEscalation =
       return {
         success: true,
         emergencyId:
-          data.eventId,
+          eventId,
         status:
           "READY_FOR_ESCALATION",
         totalEscalationContacts:
@@ -1677,19 +2030,22 @@ export const advanceEmergencyEscalation =
       }
 
       const data =
-        request.data as
+        (request.data ?? {}) as
           EscalationProgressRequest;
 
-      if (
-        !data.eventId ||
-        !data.attemptResult
-      ) {
-        throw new HttpsError(
-          "invalid-argument",
-          "eventId and attemptResult " +
-          "are required."
+      const eventId =
+        normalizeDocumentId(
+          data.eventId,
+          "eventId",
+          MAX_EVENT_ID_LENGTH
         );
-      }
+
+      const attemptResult =
+        normalizeRequiredString(
+          data.attemptResult,
+          "attemptResult",
+          50
+        );
 
       const allowedResults = [
         "ANSWERED",
@@ -1699,7 +2055,7 @@ export const advanceEmergencyEscalation =
 
       if (
         !allowedResults.includes(
-          data.attemptResult
+          attemptResult
         )
       ) {
         throw new HttpsError(
@@ -1707,6 +2063,10 @@ export const advanceEmergencyEscalation =
           "Invalid attemptResult."
         );
       }
+
+      const validatedAttemptResult =
+        attemptResult as
+          EscalationProgressRequest["attemptResult"];
 
       const uid =
         request.auth.uid;
@@ -1716,7 +2076,7 @@ export const advanceEmergencyEscalation =
           .collection("users")
           .doc(uid)
           .collection("emergencies")
-          .doc(data.eventId);
+          .doc(eventId);
 
       const result =
         await db.runTransaction(
@@ -1861,7 +2221,7 @@ export const advanceEmergencyEscalation =
                   currentContact
                     .trustScore,
                 result:
-                  data.attemptResult,
+                  validatedAttemptResult,
                 attemptedAt:
                   Timestamp.now(),
               };
@@ -1872,7 +2232,7 @@ export const advanceEmergencyEscalation =
             ];
 
             if (
-              data.attemptResult ===
+              validatedAttemptResult ===
               "ANSWERED"
             ) {
               if (
@@ -1933,7 +2293,7 @@ export const advanceEmergencyEscalation =
               return {
                 success: true,
                 emergencyId:
-                  data.eventId,
+                  eventId,
                 status:
                   "CONTACT_REACHED",
                 currentContact:
@@ -1947,7 +2307,7 @@ export const advanceEmergencyEscalation =
             }
 
             if (
-              data.attemptResult ===
+              validatedAttemptResult ===
               "NO_RESPONSE"
             ) {
               currentContact.status =
@@ -1955,7 +2315,7 @@ export const advanceEmergencyEscalation =
             }
 
             if (
-              data.attemptResult ===
+              validatedAttemptResult ===
               "FAILED"
             ) {
               currentContact.status =
@@ -2018,7 +2378,7 @@ export const advanceEmergencyEscalation =
               return {
                 success: true,
                 emergencyId:
-                  data.eventId,
+                  eventId,
                 status:
                   "ESCALATION_EXHAUSTED",
                 escalationComplete:
@@ -2085,7 +2445,7 @@ export const advanceEmergencyEscalation =
             return {
               success: true,
               emergencyId:
-                data.eventId,
+                eventId,
               status:
                 "ESCALATING",
               escalationComplete:
@@ -2142,7 +2502,7 @@ export const advanceEmergencyEscalation =
 
         await sendEmergencyNotificationToUser(
           uid,
-          data.eventId,
+          eventId,
           eventType,
           notificationStatus,
           source,
@@ -2155,9 +2515,9 @@ export const advanceEmergencyEscalation =
         {
           uid: uid,
           eventId:
-            data.eventId,
+            eventId,
           attemptResult:
-            data.attemptResult,
+            validatedAttemptResult,
           status:
             result.status,
         }
@@ -2178,15 +2538,22 @@ export const cancelEmergency = onCall(
     }
 
     const data =
-      request.data as
+      (request.data ?? {}) as
         CancelEmergencyRequest;
 
-    if (!data.eventId) {
-      throw new HttpsError(
-        "invalid-argument",
-        "eventId is required."
+    const eventId =
+      normalizeDocumentId(
+        data.eventId,
+        "eventId",
+        MAX_EVENT_ID_LENGTH
       );
-    }
+
+    const reason =
+      normalizeOptionalString(
+        data.reason,
+        "reason",
+        MAX_REASON_LENGTH
+      );
 
     const uid =
       request.auth.uid;
@@ -2196,7 +2563,7 @@ export const cancelEmergency = onCall(
         .collection("users")
         .doc(uid)
         .collection("emergencies")
-        .doc(data.eventId);
+        .doc(eventId);
 
     const result =
       await db.runTransaction(
@@ -2288,7 +2655,7 @@ export const cancelEmergency = onCall(
                 FieldValue
                   .serverTimestamp(),
               cancellationReason:
-                data.reason ?? null,
+                reason,
               cancelledAt:
                 FieldValue
                   .serverTimestamp(),
@@ -2302,13 +2669,13 @@ export const cancelEmergency = onCall(
           return {
             success: true,
             emergencyId:
-              data.eventId,
+              eventId,
             previousStatus:
               currentStatus,
             status:
               "CANCELLED",
             reason:
-              data.reason ?? null,
+              reason,
           };
         }
       );
@@ -2348,7 +2715,7 @@ export const cancelEmergency = onCall(
 
       await sendEmergencyNotificationToUser(
         uid,
-        data.eventId,
+        eventId,
         eventType,
         "CANCELLED",
         source,
@@ -2361,11 +2728,11 @@ export const cancelEmergency = onCall(
       {
         uid: uid,
         eventId:
-          data.eventId,
+          eventId,
         previousStatus:
           result.previousStatus,
         reason:
-          data.reason ?? null,
+          reason,
       }
     );
 
@@ -2384,15 +2751,15 @@ export const getEmergencyStatus = onCall(
     }
 
     const data =
-      request.data as
+      (request.data ?? {}) as
         GetEmergencyStatusRequest;
 
-    if (!data.eventId) {
-      throw new HttpsError(
-        "invalid-argument",
-        "eventId is required."
+    const eventId =
+      normalizeDocumentId(
+        data.eventId,
+        "eventId",
+        MAX_EVENT_ID_LENGTH
       );
-    }
 
     const uid =
       request.auth.uid;
@@ -2402,7 +2769,7 @@ export const getEmergencyStatus = onCall(
         .collection("users")
         .doc(uid)
         .collection("emergencies")
-        .doc(data.eventId);
+        .doc(eventId);
 
     const emergencySnapshot =
       await emergencyRef.get();
@@ -2476,7 +2843,7 @@ export const getEmergencyStatus = onCall(
     return {
       success: true,
       emergencyId:
-        data.eventId,
+        eventId,
       status:
         status,
       eventType:
@@ -2558,56 +2925,31 @@ export const registerDeviceToken = onCall(
     }
 
     const data =
-      request.data as
+      (request.data ?? {}) as
         RegisterDeviceTokenRequest;
 
     const deviceId =
-      typeof data.deviceId ===
-      "string" ?
-        data.deviceId.trim() :
-        "";
+      normalizeDocumentId(
+        data.deviceId,
+        "deviceId",
+        200
+      );
 
     const token =
-      typeof data.token ===
-      "string" ?
-        data.token.trim() :
-        "";
+      normalizeRequiredString(
+        data.token,
+        "FCM token",
+        4096
+      );
 
     const platform =
-      data.platform ??
-      "unknown";
-
-    if (!deviceId) {
-      throw new HttpsError(
-        "invalid-argument",
-        "deviceId is required."
-      );
-    }
-
-    if (!token) {
-      throw new HttpsError(
-        "invalid-argument",
-        "FCM token is required."
-      );
-    }
-
-    if (
-      deviceId.length > 200
-    ) {
-      throw new HttpsError(
-        "invalid-argument",
-        "deviceId is too long."
-      );
-    }
-
-    if (
-      token.length > 4096
-    ) {
-      throw new HttpsError(
-        "invalid-argument",
-        "FCM token is too long."
-      );
-    }
+      data.platform === undefined ?
+        "unknown" :
+        normalizeRequiredString(
+          data.platform,
+          "platform",
+          20
+        ).toLowerCase();
 
     const allowedPlatforms = [
       "android",
@@ -2710,21 +3052,15 @@ export const sendEmergencyNotification = onCall(
     }
 
     const data =
-      request.data as
+      (request.data ?? {}) as
         SendEmergencyNotificationRequest;
 
     const eventId =
-      typeof data.eventId ===
-      "string" ?
-        data.eventId.trim() :
-        "";
-
-    if (!eventId) {
-      throw new HttpsError(
-        "invalid-argument",
-        "eventId is required."
+      normalizeDocumentId(
+        data.eventId,
+        "eventId",
+        MAX_EVENT_ID_LENGTH
       );
-    }
 
     const uid =
       request.auth.uid;
@@ -2833,5 +3169,4 @@ export const sendEmergencyNotification = onCall(
     };
   }
 );
-
 
