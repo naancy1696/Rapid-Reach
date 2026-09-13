@@ -634,6 +634,29 @@ async function sendEmergencyNotificationToUser(
       failureCount +=
         batchTokens.length;
 
+      const errorRecord =
+        typeof error === "object" &&
+        error !== null ?
+          error as {
+            code?: unknown;
+            message?: unknown;
+          } :
+          null;
+
+      const errorCode =
+        errorRecord &&
+        typeof errorRecord.code === "string" ?
+          errorRecord.code :
+          "unknown";
+
+      const errorMessage =
+        errorRecord &&
+        typeof errorRecord.message === "string" ?
+          errorRecord.message.slice(0, 500) :
+          typeof error === "string" ?
+            error.slice(0, 500) :
+            "Unknown FCM batch error.";
+
       logger.error(
         "Emergency FCM batch failed",
         {
@@ -645,7 +668,10 @@ async function sendEmergencyNotificationToUser(
             notificationLogRef.id,
           batchTargetCount:
             batchTokens.length,
-          error: error,
+          errorCode:
+            errorCode,
+          errorMessage:
+            errorMessage,
         }
       );
     }
@@ -2731,8 +2757,8 @@ export const cancelEmergency = onCall(
           eventId,
         previousStatus:
           result.previousStatus,
-        reason:
-          reason,
+        reasonProvided:
+          reason !== null,
       }
     );
 
